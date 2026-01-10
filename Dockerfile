@@ -25,12 +25,12 @@ COPY . .
 
 # Create a script to run migrations and start server
 RUN echo '#!/bin/bash\n\
-cd /app/core\n\
-echo "Running migrations..."\n\
-python manage.py migrate\n\
-echo "Starting Django server..."\n\
-python manage.py runserver 0.0.0.0:8005\n\
-' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
+    cd /app/core\n\
+    echo "Running migrations..."\n\
+    python manage.py migrate\n\
+    echo "Starting Django server..."\n\
+    python manage.py runserver 0.0.0.0:8005\n\
+    ' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
 
 # Expose port
 EXPOSE 8005
