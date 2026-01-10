@@ -23,17 +23,8 @@ RUN pip install --upgrade pip && \
 # Copy project
 COPY . .
 
-# Create a script to run migrations and start server
-RUN echo '#!/bin/bash\n\
-    cd /app/core\n\
-    echo "Running migrations..."\n\
-    python manage.py migrate\n\
-    echo "Starting Django server..."\n\
-    python manage.py runserver 0.0.0.0:8005\n\
-    ' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
-
 # Expose port
 EXPOSE 8005
 
-# Run entrypoint script
-ENTRYPOINT ["/app/entrypoint.sh"]
+# Run migrations and start server
+CMD ["bash", "-c", "cd /app/core && python manage.py migrate && python manage.py runserver 0.0.0.0:8005"]
