@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: ringmig_postgres
+    environment:
+      POSTGRES_DB: ringmig_db
+      POSTGRES_USER: ringmig_user
+      POSTGRES_PASSWORD: ringmig_password_123
+      POSTGRES_HOST_AUTHENTICATION_METHOD: md5
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ringmig_user -d ringmig_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build: .
+    container_name: ringmig_web
+    command: bash -c "cd /app/core && python manage.py migrate && python manage.py runserver 0.0.0.0:8005"
+    ports:
+      - "8005:8005"
+    environment:
+      DEBUG: "True"
+      SECRET_KEY: "django-insecure-21rj=5m8b3dom#cz^u9jqut(s5!im4a@j039u@!asro8tntz5="
+      DATABASE_URL: "postgresql://ringmig_user:ringmig_password_123@db:5432/ringmig_db"
+      DB_ENGINE: "django.db.backends.postgresql"
+      DB_NAME: "ringmig_db"
+      DB_USER: "ringmig_user"
+      DB_PASSWORD: "ringmig_password_123"
+      DB_HOST: "db"
+      DB_PORT: "5432"
+    volumes:
+      - .:/app
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: on-failure
+
+volumes:
+  postgres_data:
+    driver: local
