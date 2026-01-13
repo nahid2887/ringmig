@@ -1,0 +1,84 @@
+# Swedish translations for Ring Mig API
+# Copyright (C) 2026
+# This file is distributed under the same license as the PACKAGE package.
+#
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: sv\n"
+"MIME-Version: 1.0\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+# User Model Translations
+msgid "English"
+msgstr "Engelska"
+
+msgid "Swedish"
+msgstr "Svenska"
+
+msgid "Preferred language"
+msgstr "Föredraget språk"
+
+# Serializer Translations
+msgid "Passwords do not match."
+msgstr "Lösenorden matchar inte."
+
+msgid "Email is already registered."
+msgstr "E-postadressen är redan registrerad."
+
+# User Type Translations
+msgid "Talker"
+msgstr "Talare"
+
+msgid "Listener"
+msgstr "Lyssnare"
+
+# Common Validation Messages
+msgid "This field is required."
+msgstr "Det här fältet är obligatoriskt."
+
+msgid "Enter a valid email address."
+msgstr "Ange en giltig e-postadress."
+
+msgid "Password too short. Minimum 8 characters."
+msgstr "Lösenordet är för kort. Minst 8 tecken krävs."
+
+msgid "Password too common."
+msgstr "Lösenordet är för vanligt."
+
+msgid "Password is entirely numeric."
+msgstr "Lösenordet är helt numeriskt."
+
+# API Response Messages
+msgid "User created successfully."
+msgstr "Användaren skapades framgångsrikt."
+
+msgid "User logged in successfully."
+msgstr "Användaren loggade in framgångsrikt."
+
+msgid "OTP sent successfully."
+msgstr "OTP skickades framgångsrikt."
+
+msgid "Invalid OTP."
+msgstr "Ogiltigt OTP."
+
+msgid "User not found."
+msgstr "Användare hittades inte."
+
+msgid "Invalid credentials."
+msgstr "Ogiltiga uppgifter."
+
+msgid "Password changed successfully."
+msgstr "Lösenordet ändrades framgångsrikt."
+
+msgid "Unauthorized access."
+msgstr "Obehörig åtkomst."
+
+msgid "Permission denied."
+msgstr "Behörighet nekad."
+
+msgid "Profile updated successfully."
+msgstr "Profilen uppdaterades framgångsrikt."
+
+msgid "Language preference updated."
+msgstr "Språkpreferens uppdaterad."

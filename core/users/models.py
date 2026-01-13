@@ -1,6 +1,7 @@
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.db import models
 from django.utils import timezone
+from django.utils.translation import gettext_lazy as _
 from datetime import timedelta
 
 
@@ -31,11 +32,17 @@ class User(AbstractBaseUser, PermissionsMixin):
         ('listener', 'Listener'),
     ]
 
+    LANGUAGE_CHOICES = [
+        ('en', _('English')),
+        ('sv', _('Swedish')),
+    ]
+
     email = models.EmailField(unique=True)
     full_name = models.CharField(max_length=200, blank=True)
     user_type = models.CharField(max_length=20, choices=USER_TYPE_CHOICES, default='talker')
     phone_number = models.CharField(max_length=20, blank=True)
     birthday = models.DateField(null=True, blank=True)
+    language = models.CharField(max_length=5, choices=LANGUAGE_CHOICES, default='en', help_text=_('Preferred language'))
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
     is_verified = models.BooleanField(default=False)

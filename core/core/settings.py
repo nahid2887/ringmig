@@ -50,11 +50,13 @@ MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
+    'django.middleware.locale.LocaleMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'users.middleware.LanguageMiddleware',
 ]
 
 ROOT_URLCONF = 'core.urls'
@@ -115,10 +117,22 @@ AUTH_PASSWORD_VALIDATORS = [
 
 
 # Internationalization
-LANGUAGE_CODE = 'en-us'
+LANGUAGE_CODE = 'en'
 TIME_ZONE = 'UTC'
 USE_I18N = True
+USE_L10N = True
 USE_TZ = True
+
+# Supported Languages
+LANGUAGES = [
+    ('en', 'English'),
+    ('sv', 'Swedish'),
+]
+
+# Locale paths for translation files
+LOCALE_PATHS = [
+    os.path.join(BASE_DIR.parent, 'locale'),
+]
 
 
 # Static files

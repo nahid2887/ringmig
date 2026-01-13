@@ -1,0 +1,84 @@
+# English translations for Ring Mig API
+# Copyright (C) 2026
+# This file is distributed under the same license as the PACKAGE package.
+#
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: en\n"
+"MIME-Version: 1.0\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+# User Model Translations
+msgid "English"
+msgstr "English"
+
+msgid "Swedish"
+msgstr "Swedish"
+
+msgid "Preferred language"
+msgstr "Preferred language"
+
+# Serializer Translations
+msgid "Passwords do not match."
+msgstr "Passwords do not match."
+
+msgid "Email is already registered."
+msgstr "Email is already registered."
+
+# User Type Translations
+msgid "Talker"
+msgstr "Talker"
+
+msgid "Listener"
+msgstr "Listener"
+
+# Common Validation Messages
+msgid "This field is required."
+msgstr "This field is required."
+
+msgid "Enter a valid email address."
+msgstr "Enter a valid email address."
+
+msgid "Password too short. Minimum 8 characters."
+msgstr "Password too short. Minimum 8 characters."
+
+msgid "Password too common."
+msgstr "Password too common."
+
+msgid "Password is entirely numeric."
+msgstr "Password is entirely numeric."
+
+# API Response Messages
+msgid "User created successfully."
+msgstr "User created successfully."
+
+msgid "User logged in successfully."
+msgstr "User logged in successfully."
+
+msgid "OTP sent successfully."
+msgstr "OTP sent successfully."
+
+msgid "Invalid OTP."
+msgstr "Invalid OTP."
+
+msgid "User not found."
+msgstr "User not found."
+
+msgid "Invalid credentials."
+msgstr "Invalid credentials."
+
+msgid "Password changed successfully."
+msgstr "Password changed successfully."
+
+msgid "Unauthorized access."
+msgstr "Unauthorized access."
+
+msgid "Permission denied."
+msgstr "Permission denied."
+
+msgid "Profile updated successfully."
+msgstr "Profile updated successfully."
+
+msgid "Language preference updated."
+msgstr "Language preference updated."
