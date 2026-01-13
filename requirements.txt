@@ -17,6 +17,9 @@ python-dotenv==1.1.1
 # Database
 psycopg2-binary==2.9.11
 
+# Image Processing
+Pillow==11.0.0
+
 # Production Server
 whitenoise==6.9.0
 gunicorn==23.0.0
