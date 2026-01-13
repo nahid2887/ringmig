@@ -22,9 +22,9 @@ services:
   web:
     build: .
     container_name: ringmig_web
-    command: bash -c "cd /app/core && python manage.py migrate && python manage.py runserver 0.0.0.0:8005"
+    command: bash -c "cd /app/core && python manage.py migrate && python manage.py runserver 0.0.0.0:80"
     ports:
-      - "8005:8005"
+      - "80:80"
     environment:
       DEBUG: "True"
       SECRET_KEY: "django-insecure-21rj=5m8b3dom#cz^u9jqut(s5!im4a@j039u@!asro8tntz5="
