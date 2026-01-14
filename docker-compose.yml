@@ -14,7 +14,18 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ringmig_user -d ringmig_db"]
+      test: [ "CMD-SHELL", "pg_isready -U ringmig_user -d ringmig_db" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: ringmig_redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -22,7 +33,7 @@ services:
   web:
     build: .
     container_name: ringmig_web
-    command: bash -c "cd /app/core && python manage.py migrate && python manage.py runserver 0.0.0.0:80"
+    command: bash -c "cd /app/core && python manage.py migrate && python manage.py collectstatic --noinput && daphne -b 0.0.0.0 -p 80 core.asgi:application"
     ports:
       - "80:80"
     environment:
@@ -35,13 +46,20 @@ services:
       DB_PASSWORD: "ringmig_password_123"
       DB_HOST: "db"
       DB_PORT: "5432"
+      REDIS_HOST: "redis"
+      REDIS_PORT: "6379"
     volumes:
       - .:/app
+      - media_data:/app/core/media
     depends_on:
       db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     restart: on-failure
 
 volumes:
   postgres_data:
+    driver: local
+  media_data:
     driver: local
