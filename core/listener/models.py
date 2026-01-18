@@ -71,7 +71,7 @@ class ListenerProfile(models.Model):
     experience_level = models.CharField(max_length=20, choices=EXPERIENCE_LEVEL, default='beginner')
     bio = models.TextField(blank=True, help_text=_('Tell talkers about yourself'))
     about_me = models.TextField(blank=True, help_text=_('Additional information about yourself'))
-    specialties = models.CharField(max_length=500, blank=True, help_text=_('Comma-separated list of listening specialties'))
+    specialties = models.JSONField(default=list, blank=True, help_text=_('List of listening specialties'))
     topics = models.JSONField(default=list, blank=True, help_text=_('Topics comfortable talking about'))
     languages = models.JSONField(default=list, blank=True, help_text=_('Languages the listener can speak'))
     
