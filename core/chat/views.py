@@ -54,7 +54,20 @@ class ConversationViewSet(viewsets.ModelViewSet):
         listener_id = serializer.validated_data['listener_id']
         initial_message = serializer.validated_data['initial_message']
         
-        listener = get_object_or_404(User, id=listener_id, user_type='listener')
+        # Try to get listener by User ID first, then by ListenerProfile ID
+        try:
+            listener = User.objects.get(id=listener_id, user_type='listener')
+        except User.DoesNotExist:
+            # Try getting by ListenerProfile ID
+            from listener.models import ListenerProfile
+            try:
+                listener_profile = ListenerProfile.objects.get(id=listener_id)
+                listener = listener_profile.user
+            except ListenerProfile.DoesNotExist:
+                return Response(
+                    {'error': f'Listener with ID {listener_id} not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
         
         # Get or create conversation in pending status
         conversation, created = Conversation.objects.get_or_create(
