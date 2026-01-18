@@ -48,6 +48,7 @@ INSTALLED_APPS = [
     'listener',
     'talker',
     'chat',
+    'payment',
 ]
 
 MIDDLEWARE = [
@@ -260,3 +261,13 @@ SWAGGER_SETTINGS = {
     },
     'USE_SESSION_AUTH': False,
 }
+
+# Stripe Configuration
+STRIPE_PUBLISHABLE_KEY = os.getenv('STRIPE_PUBLISHABLE_KEY', '')
+STRIPE_SECRET_KEY = os.getenv('STRIPE_SECRET_KEY', '')
+STRIPE_WEBHOOK_SECRET = os.getenv('STRIPE_WEBHOOK_SECRET', '')
+
+# Stripe Payment Settings
+STRIPE_CURRENCY = 'usd'
+STRIPE_APP_FEE_PERCENTAGE = 10.0  # 10% commission for the app
+STRIPE_LISTENER_PERCENTAGE = 90.0  # 90% goes to listener

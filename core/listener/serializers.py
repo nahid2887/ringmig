@@ -17,6 +17,7 @@ class ListenerProfileSerializer(serializers.ModelSerializer):
     """Serializer for listener profile with personal information."""
     full_name = serializers.SerializerMethodField()
     user_email = serializers.CharField(source='user.email', read_only=True)
+    profile_image = serializers.SerializerMethodField()
 
     class Meta:
         model = ListenerProfile
@@ -28,12 +29,21 @@ class ListenerProfileSerializer(serializers.ModelSerializer):
 
     def get_full_name(self, obj):
         return obj.get_full_name()
+    
+    def get_profile_image(self, obj):
+        if obj.profile_image:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.profile_image.url)
+            return obj.profile_image.url
+        return None
 
 
 class ListenerListSerializer(serializers.ModelSerializer):
     """Serializer for listing listeners."""
     user_email = serializers.CharField(source='user.email', read_only=True)
     full_name = serializers.SerializerMethodField()
+    profile_image = serializers.SerializerMethodField()
 
     class Meta:
         model = ListenerProfile
@@ -43,3 +53,11 @@ class ListenerListSerializer(serializers.ModelSerializer):
 
     def get_full_name(self, obj):
         return obj.get_full_name()
+    
+    def get_profile_image(self, obj):
+        if obj.profile_image:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.profile_image.url)
+            return obj.profile_image.url
+        return None
