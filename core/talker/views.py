@@ -66,14 +66,14 @@ class TalkerProfileViewSet(viewsets.ModelViewSet):
     def all_listeners(self, request):
         """Get all listeners for talker to browse."""
         listeners = ListenerProfile.objects.all()
-        serializer = ListenerListSerializer(listeners, many=True)
+        serializer = ListenerListSerializer(listeners, many=True, context={'request': request})
         return Response(serializer.data)
 
     @action(detail=False, methods=['get'], permission_classes=[IsTalkerUser])
     def available_listeners(self, request):
         """Get all available listeners only."""
         listeners = ListenerProfile.objects.filter(is_available=True)
-        serializer = ListenerListSerializer(listeners, many=True)
+        serializer = ListenerListSerializer(listeners, many=True, context={'request': request})
         return Response(serializer.data)
 
     @action(detail=False, methods=['post'], permission_classes=[IsTalkerUser])
