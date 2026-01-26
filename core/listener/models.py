@@ -1,6 +1,7 @@
 from django.db import models
 from django.contrib.auth import get_user_model
 from django.utils.translation import gettext_lazy as _
+from decimal import Decimal
 
 User = get_user_model()
 
@@ -137,3 +138,57 @@ class ListenerRating(models.Model):
         super().save(*args, **kwargs)
         # Update the listener's average rating
         self.listener.update_average_rating()
+
+
+class ListenerBalance(models.Model):
+    """Single table to maintain listener's balance."""
+    
+    listener = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name='balance_account',
+        limit_choices_to={'user_type': 'listener'}
+    )
+    
+    # Main balance field
+    available_balance = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text=_('Current available balance')
+    )
+    
+    # History tracking
+    total_earned = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text=_('Total money earned (lifetime)')
+    )
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        verbose_name = _('Listener Balance')
+        verbose_name_plural = _('Listener Balances')
+    
+    def __str__(self):
+        return f"{self.listener.email}: ${self.available_balance}"
+    
+    def add_earnings(self, amount):
+        """Add money to balance."""
+        amount = Decimal(str(amount))
+        self.available_balance += amount
+        self.total_earned += amount
+        self.save(update_fields=['available_balance', 'total_earned', 'updated_at'])
+    
+    def deduct(self, amount):
+        """Deduct money from balance (for future withdrawals)."""
+        amount = Decimal(str(amount))
+        if self.available_balance >= amount:
+            self.available_balance -= amount
+            self.save(update_fields=['available_balance', 'updated_at'])
+            return True
+        return False

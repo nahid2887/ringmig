@@ -5,6 +5,9 @@ import os
 
 User = get_user_model()
 
+# Import call models
+from .call_models import CallSession, CallPackage, UniversalCallPackage
+
 
 class Conversation(models.Model):
     """Represents a chat conversation between a listener and a talker."""

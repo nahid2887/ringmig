@@ -4,7 +4,8 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.parsers import MultiPartParser, FormParser
 from django.shortcuts import get_object_or_404
-from .models import ListenerProfile, ListenerRating
+from decimal import Decimal
+from .models import ListenerProfile, ListenerRating, ListenerBalance
 from .serializers import ListenerProfileSerializer, ListenerListSerializer, ListenerRatingSerializer
 
 
@@ -64,7 +65,31 @@ class ListenerProfileViewSet(viewsets.ModelViewSet):
             return ListenerProfile.objects.filter(is_available=True)
         return ListenerProfile.objects.all()
 
-    @action(detail=False, methods=['get', 'put', 'patch'], permission_classes=[IsListenerUser])
+    @action(detail=False, methods=['get'], permission_classes=[AllowAny])
+    def available(self, request):
+        """Get all available listeners."""
+        listeners = ListenerProfile.objects.filter(is_available=True).order_by('-average_rating')
+        serializer = ListenerListSerializer(listeners, many=True, context={'request': request})
+        return Response({
+            'count': listeners.count(),
+            'results': serializer.data
+        })
+
+    @action(detail=True, methods=['get'], permission_classes=[AllowAny])
+    def details(self, request, pk=None):
+        """Get detailed information about a specific listener (public endpoint for talkers)."""
+        try:
+            listener = ListenerProfile.objects.get(user_id=pk)
+        except ListenerProfile.DoesNotExist:
+            return Response(
+                {'error': f'Listener with ID {pk} not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        serializer = ListenerProfileSerializer(listener, context={'request': request})
+        return Response(serializer.data)
+
+    @action(detail=False, methods=['get', 'put', 'patch'], permission_classes=[IsListenerUser], parser_classes=[MultiPartParser, FormParser])
     def my_profile(self, request):
         """Get or update the authenticated listener user's profile."""
         try:
@@ -76,12 +101,54 @@ class ListenerProfileViewSet(viewsets.ModelViewSet):
             )
 
         if request.method == 'GET':
-            serializer = self.get_serializer(listener_profile)
+            serializer = self.get_serializer(listener_profile, context={'request': request})
             return Response(serializer.data)
 
         elif request.method in ['PUT', 'PATCH']:
-            serializer = self.get_serializer(listener_profile, data=request.data, partial=True)
+            serializer = self.get_serializer(listener_profile, data=request.data, partial=True, context={'request': request})
             if serializer.is_valid():
                 serializer.save()
-                return Response(serializer.data)
+                # Refresh to get updated image
+                listener_profile.refresh_from_db()
+                response_data = serializer.data
+                # Ensure profile_image_url is included
+                if listener_profile.profile_image:
+                    response_data['profile_image_url'] = request.build_absolute_uri(listener_profile.profile_image.url)
+                return Response(response_data)
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class ListenerBalanceViewSet(viewsets.ReadOnlyModelViewSet):
+    """ViewSet for viewing listener balance (read-only)."""
+    
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        """Only show balance for current listener."""
+        user = self.request.user
+        if user.user_type == 'listener':
+            return ListenerBalance.objects.filter(listener=user)
+        return ListenerBalance.objects.none()
+    
+    @action(detail=False, methods=['get'], url_path='my-balance')
+    def my_balance(self, request):
+        """Get current user's balance."""
+        user = request.user
+        
+        if user.user_type != 'listener':
+            return Response(
+                {'error': 'Only listeners can view balance'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Get or create balance account
+        balance, created = ListenerBalance.objects.get_or_create(
+            listener=user,
+            defaults={'available_balance': Decimal('0.00'), 'total_earned': Decimal('0.00')}
+        )
+        
+        return Response({
+            'available_balance': str(balance.available_balance),
+            'total_earned': str(balance.total_earned),
+            'last_updated': balance.updated_at
+        })

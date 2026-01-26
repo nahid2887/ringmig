@@ -17,20 +17,23 @@ class ListenerProfileSerializer(serializers.ModelSerializer):
     """Serializer for listener profile with personal information."""
     full_name = serializers.SerializerMethodField()
     user_email = serializers.CharField(source='user.email', read_only=True)
-    profile_image = serializers.SerializerMethodField()
+    profile_image_url = serializers.SerializerMethodField()
 
     class Meta:
         model = ListenerProfile
         fields = ['id', 'user', 'user_email', 'first_name', 'last_name', 'full_name', 'gender', 
-                  'profile_image', 'location', 'experience_level', 'bio', 'about_me', 'specialties', 
-                  'topics', 'languages', 'hourly_rate', 'is_available', 'accept_direct_calls', 
+                  'profile_image', 'profile_image_url', 'location', 'experience_level', 'bio', 'about_me', 'specialties', \
+                  'topics', 'languages', 'hourly_rate', 'is_available', 'accept_direct_calls', \
                   'total_hours', 'average_rating', 'created_at', 'updated_at']
-        read_only_fields = ['user', 'user_email', 'total_hours', 'average_rating', 'created_at', 'updated_at', 'id']
+        read_only_fields = ['user', 'user_email', 'total_hours', 'average_rating', 'created_at', 'updated_at', 'id', 'profile_image_url']
+        extra_kwargs = {
+            'profile_image': {'allow_null': True, 'required': False}
+        }
 
     def get_full_name(self, obj):
         return obj.get_full_name()
     
-    def get_profile_image(self, obj):
+    def get_profile_image_url(self, obj):
         if obj.profile_image:
             request = self.context.get('request')
             if request:
@@ -41,13 +44,15 @@ class ListenerProfileSerializer(serializers.ModelSerializer):
 
 class ListenerListSerializer(serializers.ModelSerializer):
     """Serializer for listing listeners."""
+    id = serializers.CharField(source='user.id', read_only=True)
     user_email = serializers.CharField(source='user.email', read_only=True)
+    user_type = serializers.CharField(source='user.user_type', read_only=True)
     full_name = serializers.SerializerMethodField()
     profile_image = serializers.SerializerMethodField()
 
     class Meta:
         model = ListenerProfile
-        fields = ['id', 'user_email', 'full_name', 'profile_image', 'gender', 'location',
+        fields = ['id', 'user_email', 'user_type', 'full_name', 'profile_image', 'gender', 'location',
                   'experience_level', 'bio', 'about_me', 'specialties', 'topics', 'languages',
                   'hourly_rate', 'is_available', 'accept_direct_calls', 'total_hours', 'average_rating']
 

@@ -40,7 +40,7 @@ class TalkerProfileViewSet(viewsets.ModelViewSet):
         """Get the talker profile for the authenticated user."""
         return get_object_or_404(TalkerProfile, user=self.request.user)
 
-    @action(detail=False, methods=['get', 'put', 'patch'], permission_classes=[IsTalkerUser])
+    @action(detail=False, methods=['get', 'put', 'patch'], permission_classes=[IsTalkerUser], parser_classes=[MultiPartParser, FormParser])
     def my_profile(self, request):
         """Get or update the authenticated talker user's profile."""
         try:
@@ -52,28 +52,89 @@ class TalkerProfileViewSet(viewsets.ModelViewSet):
             )
 
         if request.method == 'GET':
-            serializer = self.get_serializer(talker_profile)
+            serializer = self.get_serializer(talker_profile, context={'request': request})
             return Response(serializer.data)
 
         elif request.method in ['PUT', 'PATCH']:
-            serializer = self.get_serializer(talker_profile, data=request.data, partial=True)
+            serializer = self.get_serializer(talker_profile, data=request.data, partial=True, context={'request': request})
             if serializer.is_valid():
                 serializer.save()
-                return Response(serializer.data)
+                # Return serializer data with full context
+                response_data = serializer.data
+                # Ensure profile_image_url is included
+                if talker_profile.profile_image:
+                    response_data['profile_image_url'] = request.build_absolute_uri(talker_profile.profile_image.url)
+                return Response(response_data)
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     @action(detail=False, methods=['get'], permission_classes=[IsTalkerUser])
     def all_listeners(self, request):
         """Get all listeners for talker to browse."""
-        listeners = ListenerProfile.objects.all()
+        listeners = ListenerProfile.objects.all().order_by('-average_rating')
         serializer = ListenerListSerializer(listeners, many=True, context={'request': request})
-        return Response(serializer.data)
+        return Response({
+            'count': listeners.count(),
+            'results': serializer.data
+        })
 
     @action(detail=False, methods=['get'], permission_classes=[IsTalkerUser])
     def available_listeners(self, request):
         """Get all available listeners only."""
-        listeners = ListenerProfile.objects.filter(is_available=True)
+        listeners = ListenerProfile.objects.filter(is_available=True).order_by('-average_rating')
         serializer = ListenerListSerializer(listeners, many=True, context={'request': request})
+        return Response({
+            'count': listeners.count(),
+            'results': serializer.data
+        })
+    
+    def listener_detail_by_id(self, request, listener_id=None):
+        """Get detailed information about a specific listener by ID.
+        
+        URL: /api/talker/profiles/all_listeners/<listener_id>/
+        Example: /api/talker/profiles/all_listeners/1/
+        """
+        # Check permission
+        if not request.user.is_authenticated or request.user.user_type != 'talker':
+            return Response(
+                {'error': 'Only authenticated talkers can view listener details'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        try:
+            listener = ListenerProfile.objects.get(id=listener_id)
+        except ListenerProfile.DoesNotExist:
+            return Response(
+                {'error': f'Listener with ID {listener_id} not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        from listener.serializers import ListenerProfileSerializer
+        serializer = ListenerProfileSerializer(listener, context={'request': request})
+        return Response(serializer.data)
+    
+    def available_listener_detail(self, request, listener_id=None):
+        """Get detailed information about an available listener by ID.
+        
+        URL: /api/talker/profiles/available_listeners/<listener_id>/
+        Example: /api/talker/profiles/available_listeners/1/
+        """
+        # Check permission
+        if not request.user.is_authenticated or request.user.user_type != 'talker':
+            return Response(
+                {'error': 'Only authenticated talkers can view listener details'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        try:
+            listener = ListenerProfile.objects.get(id=listener_id, is_available=True)
+        except ListenerProfile.DoesNotExist:
+            return Response(
+                {'error': f'Available listener with ID {listener_id} not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        from listener.serializers import ListenerProfileSerializer
+        serializer = ListenerProfileSerializer(listener, context={'request': request})
         return Response(serializer.data)
 
     @action(detail=False, methods=['post'], permission_classes=[IsTalkerUser])

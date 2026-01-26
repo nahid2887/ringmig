@@ -90,10 +90,7 @@ ASGI_APPLICATION = 'core.asgi.application'
 # Channel Layers Configuration
 CHANNEL_LAYERS = {
     'default': {
-        'BACKEND': 'channels_redis.core.RedisChannelLayer',
-        'CONFIG': {
-            "hosts": [(os.getenv('REDIS_HOST', '127.0.0.1'), int(os.getenv('REDIS_PORT', 6379)))],
-        },
+        'BACKEND': 'channels.layers.InMemoryChannelLayer'
     },
 }
 
@@ -196,7 +193,7 @@ REST_FRAMEWORK = {
 
 # JWT Settings
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=60),
+    'ACCESS_TOKEN_LIFETIME': timedelta(days=30),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': True,
@@ -271,3 +268,12 @@ STRIPE_WEBHOOK_SECRET = os.getenv('STRIPE_WEBHOOK_SECRET', '')
 STRIPE_CURRENCY = 'usd'
 STRIPE_APP_FEE_PERCENTAGE = 10.0  # 10% commission for the app
 STRIPE_LISTENER_PERCENTAGE = 90.0  # 90% goes to listener
+
+# Agora Configuration for Real-Time Communication
+AGORA_APP_ID = os.getenv('AGORA_APP_ID', '4cd28b722093446199a5db6a89ffda4f')
+AGORA_PRIMARY_CERTIFICATE = os.getenv('AGORA_PRIMARY_CERTIFICATE', '197ae79cc31e4d9597982a635cebb3e8')
+
+# Agora Call Settings
+AGORA_TOKEN_EXPIRY_SECONDS = 7200  # 2 hours
+AGORA_DEFAULT_VIDEO_PROFILE = '480p_4'  # 640x480, 30fps
+AGORA_HIGH_QUALITY_VIDEO_PROFILE = '720p_5'  # 1280x720, 30fps

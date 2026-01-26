@@ -171,7 +171,7 @@ class Payment(models.Model):
     )
     
     # Stripe information
-    stripe_payment_intent_id = models.CharField(max_length=255, unique=True)
+    stripe_payment_intent_id = models.CharField(max_length=255, unique=True, null=True, blank=True)
     stripe_charge_id = models.CharField(max_length=255, blank=True)
     stripe_customer_id = models.CharField(max_length=255, blank=True)
     

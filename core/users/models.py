@@ -61,6 +61,10 @@ class User(AbstractBaseUser, PermissionsMixin):
     def __str__(self):
         return self.email
 
+    def get_full_name(self):
+        """Return user's full name or email if not set."""
+        return self.full_name or self.email
+
 
 class OTP(models.Model):
     """Model to store OTP for email verification during registration."""

@@ -40,6 +40,26 @@ class ConversationViewSet(viewsets.ModelViewSet):
             Q(listener=user) | Q(talker=user)
         ).distinct()
     
+    @action(detail=False, methods=['get'])
+    def pending_requests(self, request):
+        """Get all pending conversation requests for the listener."""
+        if request.user.user_type != 'listener':
+            return Response(
+                {'error': 'Only listeners can view pending requests'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        pending = Conversation.objects.filter(
+            listener=request.user,
+            status='pending'
+        ).select_related('talker').order_by('-created_at')
+        
+        serializer = ConversationListSerializer(pending, many=True, context={'request': request})
+        return Response({
+            'count': pending.count(),
+            'results': serializer.data
+        })
+    
     def create(self, request, *args, **kwargs):
         """Create a new conversation with initial message (talker only)."""
         if request.user.user_type != 'talker':
@@ -81,6 +101,25 @@ class ConversationViewSet(viewsets.ModelViewSet):
             conversation.initial_message = initial_message
             conversation.save()
         
+        # Send WebSocket notification to listener
+        if created:
+            from channels.layers import get_channel_layer
+            from asgiref.sync import async_to_sync
+            
+            channel_layer = get_channel_layer()
+            async_to_sync(channel_layer.group_send)(
+                f'user_{listener.id}_notifications',
+                {
+                    'type': 'conversation_request',
+                    'conversation_id': conversation.id,
+                    'talker_id': request.user.id,
+                    'talker_email': request.user.email,
+                    'talker_name': request.user.full_name or request.user.email,
+                    'initial_message': initial_message,
+                    'created_at': conversation.created_at.isoformat()
+                }
+            )
+        
         response_serializer = ConversationSerializer(conversation, context={'request': request})
         return Response(
             response_serializer.data,
@@ -107,6 +146,24 @@ class ConversationViewSet(viewsets.ModelViewSet):
             )
         
         conversation.accept()
+        
+        # Send WebSocket notification to talker
+        from channels.layers import get_channel_layer
+        from asgiref.sync import async_to_sync
+        
+        channel_layer = get_channel_layer()
+        async_to_sync(channel_layer.group_send)(
+            f'user_{conversation.talker.id}_notifications',
+            {
+                'type': 'conversation_accepted',
+                'conversation_id': conversation.id,
+                'listener_id': request.user.id,
+                'listener_email': request.user.email,
+                'listener_name': request.user.full_name or request.user.email,
+                'accepted_at': conversation.accepted_at.isoformat()
+            }
+        )
+        
         serializer = ConversationSerializer(conversation, context={'request': request})
         return Response(serializer.data)
     
@@ -130,6 +187,24 @@ class ConversationViewSet(viewsets.ModelViewSet):
             )
         
         conversation.reject()
+        
+        # Send WebSocket notification to talker
+        from channels.layers import get_channel_layer
+        from asgiref.sync import async_to_sync
+        
+        channel_layer = get_channel_layer()
+        async_to_sync(channel_layer.group_send)(
+            f'user_{conversation.talker.id}_notifications',
+            {
+                'type': 'conversation_rejected',
+                'conversation_id': conversation.id,
+                'listener_id': request.user.id,
+                'listener_email': request.user.email,
+                'listener_name': request.user.full_name or request.user.email,
+                'rejected_at': conversation.rejected_at.isoformat()
+            }
+        )
+        
         serializer = ConversationSerializer(conversation, context={'request': request})
         return Response(serializer.data)
     
@@ -165,7 +240,7 @@ class ConversationViewSet(viewsets.ModelViewSet):
     
     @action(detail=True, methods=['post'], parser_classes=[MultiPartParser, FormParser])
     def upload_file(self, request, pk=None):
-        """Upload a file to a conversation."""
+        """Upload a file to a conversation and broadcast via WebSocket."""
         conversation = self.get_object()
         
         file = request.FILES.get('file')
@@ -192,6 +267,23 @@ class ConversationViewSet(viewsets.ModelViewSet):
             file_type=file.content_type
         )
         
-        # Serialize and return
+        # Serialize message with full URLs
         message_serializer = MessageSerializer(message, context={'request': request})
-        return Response(message_serializer.data, status=status.HTTP_201_CREATED)
+        message_data = message_serializer.data
+        
+        # Broadcast via WebSocket to all users in this conversation
+        from channels.layers import get_channel_layer
+        from asgiref.sync import async_to_sync
+        
+        channel_layer = get_channel_layer()
+        room_group_name = f'chat_{conversation.id}'
+        
+        async_to_sync(channel_layer.group_send)(
+            room_group_name,
+            {
+                'type': 'chat_message',
+                'message': message_data
+            }
+        )
+        
+        return Response(message_data, status=status.HTTP_201_CREATED)

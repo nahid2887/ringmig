@@ -99,12 +99,24 @@ class BookingSerializer(serializers.ModelSerializer):
 
 
 class CreateBookingSerializer(serializers.Serializer):
-    """Serializer for creating a booking."""
+    """Serializer for creating a booking.
     
-    listener_id = serializers.IntegerField()
-    package_id = serializers.IntegerField()
-    scheduled_at = serializers.DateTimeField(required=False, allow_null=True)
-    notes = serializers.CharField(required=False, allow_blank=True)
+    Note: talker_id is automatically set from authenticated user.
+    Only listener_id and package_id are required in the payload.
+    """
+    
+    listener_id = serializers.IntegerField(help_text="ID of the listener to book")
+    package_id = serializers.IntegerField(help_text="ID of the booking package")
+    scheduled_at = serializers.DateTimeField(
+        required=False, 
+        allow_null=True,
+        help_text="Optional: When to schedule the booking"
+    )
+    notes = serializers.CharField(
+        required=False, 
+        allow_blank=True,
+        help_text="Optional: Additional notes for the booking"
+    )
     
     def validate_listener_id(self, value):
         """Validate listener exists and is a listener."""

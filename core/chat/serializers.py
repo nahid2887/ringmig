@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from .models import Conversation, Message, FileAttachment
+from .call_models import CallRejection, ListenerPayout, CallPackage
 
 User = get_user_model()
 
@@ -104,6 +105,7 @@ class ConversationListSerializer(serializers.ModelSerializer):
     
     other_user = serializers.SerializerMethodField()
     last_message_preview = serializers.SerializerMethodField()
+    last_message_sender_id = serializers.SerializerMethodField()
     unread_count = serializers.SerializerMethodField()
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     
@@ -111,7 +113,7 @@ class ConversationListSerializer(serializers.ModelSerializer):
         model = Conversation
         fields = [
             'id', 'status', 'status_display', 'other_user', 'last_message_at', 
-            'last_message_preview', 'unread_count', 'created_at'
+            'last_message_preview', 'last_message_sender_id', 'unread_count', 'created_at'
         ]
     
     def get_other_user(self, obj):
@@ -130,6 +132,14 @@ class ConversationListSerializer(serializers.ModelSerializer):
                 return f"📎 {last_msg.file_attachment.filename if hasattr(last_msg, 'file_attachment') else 'File'}"
             return last_msg.content[:50] + ('...' if len(last_msg.content) > 50 else '')
         return obj.initial_message[:50] + ('...' if len(obj.initial_message) > 50 else '') if obj.initial_message else 'No messages yet'
+    
+    def get_last_message_sender_id(self, obj):
+        """Get the sender ID of the last message."""
+        last_msg = obj.messages.order_by('-created_at').first()
+        if last_msg:
+            return last_msg.sender_id
+        # If no messages yet, return talker ID (who sent initial_message)
+        return obj.talker_id if obj.initial_message else None
     
     def get_unread_count(self, obj):
         """Get count of unread messages for the current user."""
@@ -152,3 +162,84 @@ class ConversationCreateSerializer(serializers.Serializer):
         if not data.get('initial_message') or not data['initial_message'].strip():
             raise serializers.ValidationError("initial_message cannot be empty.")
         return data
+
+
+class CallPayoutSerializer(serializers.ModelSerializer):
+    """Serializer for listener payouts from call packages."""
+    
+    listener_email = serializers.CharField(source='listener.email', read_only=True)
+    call_package_id = serializers.IntegerField(source='call_package.id', read_only=True, allow_null=True)
+    talker_email = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = ListenerPayout
+        fields = [
+            'id', 'listener_email', 'call_package_id', 'talker_email',
+            'amount', 'status', 'stripe_payout_id', 'earned_at',
+            'payout_requested_at', 'payout_completed_at', 'notes'
+        ]
+        read_only_fields = ['id', 'earned_at', 'payout_requested_at', 'payout_completed_at']
+        ref_name = 'CallPayoutSerializer'
+    
+    def get_talker_email(self, obj):
+        """Get talker email from related call package."""
+        if obj.call_package:
+            return obj.call_package.talker.email
+        return None
+
+
+class CallRejectionSerializer(serializers.ModelSerializer):
+    """Serializer for call rejections."""
+    
+    listener_email = serializers.CharField(source='listener.email', read_only=True)
+    talker_email = serializers.CharField(source='talker.email', read_only=True)
+    call_package_details = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = CallRejection
+        fields = [
+            'id', 'call_package', 'listener_email', 'talker_email',
+            'reason', 'notes', 'refund_issued', 'refund_amount',
+            'refund_stripe_id', 'refund_date', 'rejected_at', 'call_package_details'
+        ]
+        read_only_fields = ['id', 'rejected_at', 'refund_issued', 'refund_date', 'refund_stripe_id']
+        ref_name = 'CallRejectionSerializer'
+    
+    def get_call_package_details(self, obj):
+        """Get call package details."""
+        if obj.call_package:
+            return {
+                'id': obj.call_package.id,
+                'package_name': obj.call_package.package.name,
+                'duration_minutes': obj.call_package.package.duration_minutes,
+                'total_amount': str(obj.call_package.total_amount),
+                'status': obj.call_package.status
+            }
+        return None
+
+
+class CallPayoutListSerializer(serializers.ModelSerializer):
+    """Serializer for listing listener payouts with summary info."""
+    
+    talker_email = serializers.SerializerMethodField()
+    package_name = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = ListenerPayout
+        fields = [
+            'id', 'amount', 'status', 'talker_email', 'package_name',
+            'earned_at', 'payout_completed_at'
+        ]
+        ref_name = 'CallPayoutListSerializer'
+    
+    def get_talker_email(self, obj):
+        """Get talker email from related call package."""
+        if obj.call_package:
+            return obj.call_package.talker.email
+        return None
+    
+    def get_package_name(self, obj):
+        """Get package name from related call package."""
+        if obj.call_package:
+            return obj.call_package.package.name
+        return None
