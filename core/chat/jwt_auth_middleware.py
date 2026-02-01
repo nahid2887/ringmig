@@ -10,7 +10,7 @@ from rest_framework_simplejwt.tokens import AccessToken
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 
 User = get_user_model()
-
+  
 
 class JWTAuthMiddleware(BaseMiddleware):
     """

@@ -1,5 +1,6 @@
 from rest_framework import serializers
-from .models import TalkerProfile
+from .models import TalkerProfile, FavoriteListener
+from listener.models import ListenerProfile
 
 
 class TalkerProfileSerializer(serializers.ModelSerializer):
@@ -27,3 +28,47 @@ class TalkerProfileSerializer(serializers.ModelSerializer):
                 return request.build_absolute_uri(obj.profile_image.url)
             return obj.profile_image.url
         return None
+
+class FavoriteListenerSerializer(serializers.ModelSerializer):
+    """Serializer for favorite listener with listener details."""
+    listener_id = serializers.IntegerField(source='listener.user_id', read_only=True)
+    full_name = serializers.CharField(source='listener.get_full_name', read_only=True)
+    email = serializers.CharField(source='listener.user.email', read_only=True)
+    profile_image = serializers.SerializerMethodField()
+    gender = serializers.CharField(source='listener.gender', read_only=True)
+    location = serializers.CharField(source='listener.location', read_only=True)
+    experience_level = serializers.CharField(source='listener.experience_level', read_only=True)
+    bio = serializers.CharField(source='listener.bio', read_only=True)
+    hourly_rate = serializers.CharField(source='listener.hourly_rate', read_only=True)
+    average_rating = serializers.FloatField(source='listener.average_rating', read_only=True)
+    total_hours = serializers.FloatField(source='listener.total_hours', read_only=True)
+    
+    class Meta:
+        model = FavoriteListener
+        fields = [
+            'id', 'listener_id', 'full_name', 'email', 'profile_image', 'gender', 
+            'location', 'experience_level', 'bio', 'hourly_rate', 'average_rating', 
+            'total_hours', 'added_at'
+        ]
+        read_only_fields = ['id', 'added_at']
+    
+    def get_profile_image(self, obj):
+        if obj.listener.profile_image:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.listener.profile_image.url)
+            return obj.listener.profile_image.url
+        return None
+
+
+class AddFavoriteListenerSerializer(serializers.Serializer):
+    """Serializer for adding a listener to favorites."""
+    listener_id = serializers.IntegerField(required=True)
+    
+    def validate_listener_id(self, value):
+        """Validate that the listener exists."""
+        try:
+            ListenerProfile.objects.get(user_id=value)
+        except ListenerProfile.DoesNotExist:
+            raise serializers.ValidationError(f"Listener with ID {value} not found.")
+        return value

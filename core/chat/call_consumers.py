@@ -69,16 +69,6 @@ class CallConsumer(AsyncWebsocketConsumer):
             await self.close(code=4004)
             return
         
-        # Prevent reconnection if call is already ended
-        if self.call_session.status in ['ended', 'timeout', 'completed', 'cancelled']:
-            await self.send(text_data=json.dumps({
-                'type': 'error',
-                'code': 4010,
-                'message': f'Call session has ended and cannot be reconnected (status: {self.call_session.status})'
-            }))
-            await self.close(code=4010)
-            return
-        
         # Check if user is participant in this call
         is_participant = await self.verify_participant()
         if not is_participant:
@@ -109,9 +99,6 @@ class CallConsumer(AsyncWebsocketConsumer):
         
         # Send welcome message with call details
         await self.send_call_status()
-        
-        # Store initial status for change detection
-        self.last_status = await self.get_session_status()
         
         # DON'T auto-start call - listener must accept via /accept/ API first
         # await self.maybe_start_call()
@@ -577,24 +564,13 @@ class CallConsumer(AsyncWebsocketConsumer):
         }))
     
     async def call_ended(self, event):
-        """Handle call_ended notification and close WebSocket connection."""
+        """Handle call_ended notification."""
         await self.send(text_data=json.dumps({
             'type': 'call_ended',
-            'message': event.get('data', {}).get('message', 'Call has ended'),
-            'reason': event.get('data', {}).get('reason', 'Call ended'),
-            'duration_minutes': event.get('data', {}).get('duration_minutes', 0),
-            'ended_by': event.get('data', {}).get('ended_by'),
-            'ended_by_name': event.get('data', {}).get('ended_by_name'),
-            'timestamp': event.get('data', {}).get('timestamp'),
-            'session_id': event.get('data', {}).get('session_id'),
-            'status': 'ended'
+            'reason': event.get('reason', 'Call ended'),
+            'duration': event.get('duration'),
+            'timestamp': event.get('timestamp')
         }))
-        
-        # Wait a moment for the message to be sent
-        await asyncio.sleep(0.5)
-        
-        # Close the WebSocket connection
-        await self.close(code=1000)  # Normal closure
     
     async def error(self, event):
         """Handle error event."""

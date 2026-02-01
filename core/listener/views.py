@@ -2,11 +2,12 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
-from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from django.shortcuts import get_object_or_404
 from decimal import Decimal
-from .models import ListenerProfile, ListenerRating, ListenerBalance
-from .serializers import ListenerProfileSerializer, ListenerListSerializer, ListenerRatingSerializer
+from .models import ListenerProfile, ListenerRating, ListenerBalance, ListenerBlockedTalker
+from .serializers import (ListenerProfileSerializer, ListenerListSerializer, ListenerRatingSerializer,
+                         BlockTalkerSerializer, UnblockTalkerSerializer, BlockedTalkerListSerializer)
 
 
 class IsListenerUser(IsAuthenticated):
@@ -27,7 +28,7 @@ class ListenerProfileViewSet(viewsets.ModelViewSet):
     """ViewSet for listener profile management."""
     queryset = ListenerProfile.objects.all()
     serializer_class = ListenerProfileSerializer
-    parser_classes = (MultiPartParser, FormParser)
+    parser_classes = (JSONParser, MultiPartParser, FormParser)
 
     def get_permissions(self):
         """
@@ -116,6 +117,101 @@ class ListenerProfileViewSet(viewsets.ModelViewSet):
                     response_data['profile_image_url'] = request.build_absolute_uri(listener_profile.profile_image.url)
                 return Response(response_data)
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=False, methods=['post'], permission_classes=[IsListenerUser])
+    def block_talker(self, request):
+        """Block a talker.
+        
+        Endpoint: POST /api/listener/profiles/block_talker/
+        Request body: { "talker_id": 5 }
+        
+        When a listener blocks a talker, that talker will not see this listener
+        in their available_listeners or all_listeners endpoints.
+        """
+        serializer = BlockTalkerSerializer(data=request.data)
+        if serializer.is_valid():
+            talker_id = serializer.validated_data['talker_id']
+            
+            try:
+                blocked, created = ListenerBlockedTalker.objects.get_or_create(
+                    listener=request.user,
+                    talker_id=talker_id
+                )
+                
+                if created:
+                    return Response(
+                        {
+                            'message': f'Talker with ID {talker_id} has been blocked',
+                            'talker_id': talker_id,
+                            'blocked_at': blocked.blocked_at
+                        },
+                        status=status.HTTP_201_CREATED
+                    )
+                else:
+                    return Response(
+                        {
+                            'message': f'Talker with ID {talker_id} is already blocked',
+                            'talker_id': talker_id,
+                            'blocked_at': blocked.blocked_at
+                        },
+                        status=status.HTTP_200_OK
+                    )
+            except Exception as e:
+                return Response(
+                    {'error': f'An error occurred while blocking talker: {str(e)}'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=False, methods=['post'], permission_classes=[IsListenerUser])
+    def unblock_talker(self, request):
+        """Unblock a previously blocked talker.
+        
+        Endpoint: POST /api/listener/profiles/unblock_talker/
+        Request body: { "talker_id": 5 }
+        """
+        serializer = UnblockTalkerSerializer(data=request.data)
+        if serializer.is_valid():
+            talker_id = serializer.validated_data['talker_id']
+            
+            try:
+                blocked = ListenerBlockedTalker.objects.get(
+                    listener=request.user,
+                    talker_id=talker_id
+                )
+                blocked.delete()
+                
+                return Response(
+                    {
+                        'message': f'Talker with ID {talker_id} has been unblocked',
+                        'talker_id': talker_id
+                    },
+                    status=status.HTTP_200_OK
+                )
+            except ListenerBlockedTalker.DoesNotExist:
+                return Response(
+                    {'message': f'Talker with ID {talker_id} is not blocked'},
+                    status=status.HTTP_200_OK
+                )
+            except Exception as e:
+                return Response(
+                    {'error': f'An error occurred while unblocking talker: {str(e)}'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=False, methods=['get'], permission_classes=[IsListenerUser])
+    def blocked_talkers(self, request):
+        """Get list of blocked talkers for the authenticated listener.
+        
+        Endpoint: GET /api/listener/profiles/blocked_talkers/
+        """
+        blocked_talkers = ListenerBlockedTalker.objects.filter(listener=request.user)
+        serializer = BlockedTalkerListSerializer(blocked_talkers, many=True)
+        return Response({
+            'count': blocked_talkers.count(),
+            'results': serializer.data
+        })
 
 
 class ListenerBalanceViewSet(viewsets.ReadOnlyModelViewSet):

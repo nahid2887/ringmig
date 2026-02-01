@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.utils.translation import gettext_lazy as _
-from .models import ListenerProfile, ListenerRating
+from .models import ListenerProfile, ListenerRating, ListenerBlockedTalker
 
 
 class ListenerRatingSerializer(serializers.ModelSerializer):
@@ -66,3 +66,42 @@ class ListenerListSerializer(serializers.ModelSerializer):
                 return request.build_absolute_uri(obj.profile_image.url)
             return obj.profile_image.url
         return None
+
+
+class BlockTalkerSerializer(serializers.Serializer):
+    """Serializer for blocking a talker."""
+    talker_id = serializers.IntegerField(help_text=_('The ID of the talker to block'))
+    
+    def validate_talker_id(self, value):
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        try:
+            user = User.objects.get(id=value, user_type='talker')
+        except User.DoesNotExist:
+            raise serializers.ValidationError(_('Talker with this ID does not exist'))
+        return value
+
+
+class UnblockTalkerSerializer(serializers.Serializer):
+    """Serializer for unblocking a talker."""
+    talker_id = serializers.IntegerField(help_text=_('The ID of the talker to unblock'))
+    
+    def validate_talker_id(self, value):
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        try:
+            user = User.objects.get(id=value, user_type='talker')
+        except User.DoesNotExist:
+            raise serializers.ValidationError(_('Talker with this ID does not exist'))
+        return value
+
+
+class BlockedTalkerListSerializer(serializers.ModelSerializer):
+    """Serializer for listing blocked talkers."""
+    talker_id = serializers.CharField(source='talker.id', read_only=True)
+    talker_email = serializers.CharField(source='talker.email', read_only=True)
+    blocked_at = serializers.DateTimeField(read_only=True)
+    
+    class Meta:
+        model = ListenerBlockedTalker
+        fields = ['talker_id', 'talker_email', 'blocked_at']

@@ -6,6 +6,23 @@ from decimal import Decimal
 User = get_user_model()
 
 
+class ListenerBlockedTalker(models.Model):
+    """Model to track which talkers are blocked by listeners."""
+    
+    listener = models.ForeignKey(User, on_delete=models.CASCADE, related_name='blocked_talkers')
+    talker = models.ForeignKey(User, on_delete=models.CASCADE, related_name='blocked_by_listeners')
+    blocked_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        unique_together = ('listener', 'talker')
+        verbose_name = 'Listener Blocked Talker'
+        verbose_name_plural = 'Listener Blocked Talkers'
+        ordering = ['-blocked_at']
+    
+    def __str__(self):
+        return f"{self.listener.email} blocked {self.talker.email}"
+
+
 class ListenerProfile(models.Model):
     """Extended profile for listeners."""
     

@@ -4,6 +4,9 @@ from django.utils.translation import gettext_lazy as _
 
 User = get_user_model()
 
+# Import for FavoriteListener model
+from listener.models import ListenerProfile
+
 
 class TalkerProfile(models.Model):
     """Profile for users with talker role."""
@@ -38,4 +41,21 @@ class TalkerProfile(models.Model):
     class Meta:
         verbose_name = 'Talker Profile'
         verbose_name_plural = 'Talker Profiles'
+
+
+class FavoriteListener(models.Model):
+    """Model to store talker's favorite listeners."""
+    
+    talker = models.ForeignKey(User, on_delete=models.CASCADE, related_name='favorite_listeners')
+    listener = models.ForeignKey(ListenerProfile, on_delete=models.CASCADE, related_name='favorited_by_talkers')
+    added_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        unique_together = ('talker', 'listener')
+        verbose_name = 'Favorite Listener'
+        verbose_name_plural = 'Favorite Listeners'
+        ordering = ['-added_at']
+    
+    def __str__(self):
+        return f"{self.talker.email} favorites {self.listener.get_full_name()}"
 

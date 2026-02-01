@@ -636,7 +636,7 @@ class ConversationListConsumer(AsyncWebsocketConsumer):
         }))
     
     async def disconnect(self, close_code):
-        """Handle WebSocket disconnection."""
+        """Handle WebSocket disconnection.""" 
         # Leave conversation list group
         if hasattr(self, 'conversation_list_group'):
             await self.channel_layer.group_discard(
