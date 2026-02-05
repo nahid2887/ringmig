@@ -8,6 +8,7 @@ from rest_framework_simplejwt.tokens import AccessToken
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from .models import Conversation, Message, FileAttachment
 from .serializers import MessageSerializer
+from listener.models import ListenerBlockedTalker
 
 User = get_user_model()
 
@@ -281,6 +282,9 @@ class ChatConsumer(AsyncWebsocketConsumer):
         """Get conversation and verify user is a participant."""
         try:
             conversation = Conversation.objects.get(id=self.conversation_id)
+            # If listener has blocked the talker, disallow access to the conversation
+            if ListenerBlockedTalker.objects.filter(listener=conversation.listener, talker=conversation.talker).exists():
+                return None
             if self.user in [conversation.listener, conversation.talker]:
                 return conversation
             return None
@@ -340,6 +344,9 @@ class ChatConsumer(AsyncWebsocketConsumer):
         """Save message to database."""
         from django.utils import timezone
         conversation = Conversation.objects.get(id=self.conversation_id)
+        # Prevent saving messages if listener blocked the talker
+        if ListenerBlockedTalker.objects.filter(listener=conversation.listener, talker=conversation.talker).exists():
+            raise PermissionError("Messaging is blocked between these users")
         message = Message.objects.create(
             conversation=conversation,
             sender=self.user,
@@ -356,6 +363,9 @@ class ChatConsumer(AsyncWebsocketConsumer):
         """Save file message to database."""
         from django.utils import timezone
         conversation = Conversation.objects.get(id=self.conversation_id)
+        # Prevent saving messages if listener blocked the talker
+        if ListenerBlockedTalker.objects.filter(listener=conversation.listener, talker=conversation.talker).exists():
+            raise PermissionError("Messaging is blocked between these users")
         
         # Decode base64 file data
         try:
@@ -528,20 +538,12 @@ class NotificationConsumer(AsyncWebsocketConsumer):
             'talker': {
                 'id': event['talker_id'],
                 'email': event['talker_email'],
-                'full_name': event['talker_name']
+                'full_name': event['talker_name'],
+                'profile_image': event.get('talker_image')
             },
             'call_type': event['call_type'],
             'total_minutes': event['total_minutes'],
-            'created_at': event['created_at'],
-            'agora': {
-                'app_id': event.get('agora', {}).get('app_id'),
-                'channel_name': event.get('agora', {}).get('channel_name'),
-                'token': event.get('agora', {}).get('token'),  # Listener's token
-                'uid': event.get('agora', {}).get('uid'),  # Listener's uid
-                'call_type': event.get('agora', {}).get('call_type'),
-                'expires_in': event.get('agora', {}).get('expires_in'),
-                'video_config': event.get('agora', {}).get('video_config')
-            }
+            'created_at': event['created_at']
         }))
 
     async def call_ended_notification(self, event):

@@ -8,7 +8,7 @@ from .call_views import (
     CallRejectionViewSet,
     ListenerPayoutViewSet
 )
-from .agora_views import AgoraCallViewSet
+# from .agora_views import AgoraCallViewSet  # Agora system commented out
 
 router = DefaultRouter()
 router.register(r'conversations', ConversationViewSet, basename='conversation')
@@ -17,7 +17,7 @@ router.register(r'call-packages', CallPackageViewSet, basename='call-package')
 router.register(r'call-sessions', CallSessionViewSet, basename='call-session')
 router.register(r'call-rejections', CallRejectionViewSet, basename='call-rejection')
 router.register(r'payouts', ListenerPayoutViewSet, basename='listener-payout')
-router.register(r'agora-calls', AgoraCallViewSet, basename='agora-call')
+# router.register(r'agora-calls', AgoraCallViewSet, basename='agora-call')  # Agora system commented out
 
 urlpatterns = [
     path('', include(router.urls)),

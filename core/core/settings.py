@@ -269,6 +269,9 @@ STRIPE_CURRENCY = 'usd'
 STRIPE_APP_FEE_PERCENTAGE = 10.0  # 10% commission for the app
 STRIPE_LISTENER_PERCENTAGE = 90.0  # 90% goes to listener
 
+# Frontend Configuration
+FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5173')
+
 # Agora Configuration for Real-Time Communication
 AGORA_APP_ID = os.getenv('AGORA_APP_ID', '4cd28b722093446199a5db6a89ffda4f')
 AGORA_PRIMARY_CERTIFICATE = os.getenv('AGORA_PRIMARY_CERTIFICATE', '197ae79cc31e4d9597982a635cebb3e8')

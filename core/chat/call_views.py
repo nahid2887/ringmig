@@ -904,37 +904,34 @@ class CallSessionViewSet(viewsets.ReadOnlyModelViewSet):
                     call_type=call_type
                 )
                 
-                # Generate Agora tokens for both participants
-                from .agora_utils import agora_token_generator, agora_call_manager
-                
-                tokens = agora_token_generator.generate_tokens_for_call(
-                    session_id=session.id,
-                    talker_uid=call_package.talker.id,
-                    listener_uid=call_package.listener.id
-                )
-                
-                # Update session with Agora details
-                session.agora_channel_name = tokens['channel_name']
-                session.agora_talker_token = tokens['talker_token']
-                session.agora_listener_token = tokens['listener_token']
-                session.agora_talker_uid = tokens['talker_uid']
-                session.agora_listener_uid = tokens['listener_uid']
-                session.agora_tokens_generated_at = timezone.now()
-                session.save()
-                
+                # # Generate Agora tokens for both participants
+                # from .agora_utils import agora_token_generator, agora_call_manager
+                # 
+                # tokens = agora_token_generator.generate_tokens_for_call(
+                #     session_id=session.id,
+                #     talker_uid=call_package.talker.id,
+                #     listener_uid=call_package.listener.id
+                # )
+                # 
+                # # Update session with Agora details
+                # session.agora_channel_name = tokens['channel_name']
+                # session.agora_talker_token = tokens['talker_token']
+                # session.agora_listener_token = tokens['listener_token']
+                # session.agora_talker_uid = tokens['talker_uid']
+                # session.agora_listener_uid = tokens['listener_uid']
+                # session.agora_tokens_generated_at = timezone.now()
+                # session.save()
+                # 
                 # Don't mark as in_progress yet - wait for WebSocket connection
                 # call_package.start_call() will be called by CallConsumer.start_call()
                 
                 # Send incoming call notification to listener via Channel Layer
-                self.send_incoming_call_notification(session, call_package, tokens)
+                self.send_incoming_call_notification(session, call_package)
                 
-                # Determine user's Agora token and UID
-                if request.user == call_package.talker:
-                    user_token = tokens['talker_token']
-                    user_uid = tokens['talker_uid']
-                else:
-                    user_token = tokens['listener_token']
-                    user_uid = tokens['listener_uid']
+                # Agora system commented out
+                tokens = {}
+                user_token = None
+                user_uid = None
                 
                 return Response({
                     'message': 'Call session created. Connect to WebSocket to start call.',
@@ -957,17 +954,17 @@ class CallSessionViewSet(viewsets.ReadOnlyModelViewSet):
                         'created_at': session.created_at.isoformat(),
                         'updated_at': session.updated_at.isoformat()
                     },
-                    'agora': {
-                        'app_id': tokens['app_id'],
-                        'channel_name': tokens['channel_name'],
-                        'token': user_token,
-                        'uid': user_uid,
-                        'call_type': call_type,
-                        'expires_in': tokens['expires_in'],
-                        'video_config': agora_call_manager.get_call_config(package_type)
-                    },
+                    # 'agora': {
+                    #     'app_id': tokens['app_id'],
+                    #     'channel_name': tokens['channel_name'],
+                    #     'token': user_token,
+                    #     'uid': user_uid,
+                    #     'call_type': call_type,
+                    #     'expires_in': tokens['expires_in'],
+                    #     'video_config': agora_call_manager.get_call_config(package_type)
+                    # },
                     'websocket_url': f'/ws/call/{session.id}/',
-                    'websocket_full_url': f'ws://10.10.13.27:8005/ws/call/{session.id}/?token=YOUR_JWT_TOKEN',
+                    'websocket_full_url': f'ws://10.10.13.27:8005/ws/call/{session.id}/?token=',
                     'call_package_id': call_package.id,
                     'duration_minutes': call_package.package.duration_minutes
                 }, status=status.HTTP_201_CREATED)
@@ -1151,8 +1148,8 @@ class CallSessionViewSet(viewsets.ReadOnlyModelViewSet):
                         'quantity': 1,
                     }],
                     mode='payment',
-                    success_url=getattr(settings, 'FRONTEND_URL', 'http://localhost:3000') + f'/call/extended?session_id={{CHECKOUT_SESSION_ID}}&call_package_id={extend_package.id}',
-                    cancel_url=getattr(settings, 'FRONTEND_URL', 'http://localhost:3000') + f'/call/{call_session_id}',
+                    success_url="http://localhost:5174/dashboard/talker/payment-success-start-call",
+                    cancel_url=getattr(settings, 'FRONTEND_URL', 'http://localhost:5173') + f'/call/{call_session_id}',
                     metadata={
                         'call_package_id': extend_package.id,
                         'call_session_id': call_session_id,
@@ -1278,22 +1275,22 @@ class CallSessionViewSet(viewsets.ReadOnlyModelViewSet):
                 package.activated_at = timezone.now()
                 package.save(update_fields=['status', 'activated_at', 'updated_at'])
             
-            # Get Agora data
-            from django.conf import settings
-            agora_data = {
-                'app_id': getattr(settings, 'AGORA_APP_ID', '4cd28b722093446199a5db6a89ffda4f'),
-                'channel_name': call_session.agora_channel_name,
-                'token': call_session.agora_listener_token,
-                'uid': call_session.agora_listener_uid,
-                'call_type': call_session.call_type or 'audio',
-                'expires_in': 7200,  # 2 hours default
-                'video_config': {
-                    'video_enabled': call_session.call_type == 'video',
-                    'audio_enabled': True,
-                    'video_profile': None,
-                    'call_type': call_session.call_type or 'audio'
-                }
-            }
+            # # Get Agora data - Agora system commented out
+            # agora_data = {
+            #     'app_id': getattr(settings, 'AGORA_APP_ID', '4cd28b722093446199a5db6a89ffda4f'),
+            #     'channel_name': call_session.agora_channel_name,
+            #     'token': call_session.agora_listener_token,
+            #     'uid': call_session.agora_listener_uid,
+            #     'call_type': call_session.call_type or 'audio',
+            #     'expires_in': 7200,  # 2 hours default
+            #     'video_config': {
+            #         'video_enabled': call_session.call_type == 'video',
+            #         'audio_enabled': True,
+            #         'video_profile': None,
+            #         'call_type': call_session.call_type or 'audio'
+            #     }
+            # }
+            agora_data = {}
             
             # Notify talker via WebSocket that listener has accepted
             self.send_call_accepted_notification(call_session_id, call_session)
@@ -1530,21 +1527,26 @@ class CallSessionViewSet(viewsets.ReadOnlyModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
-    def send_incoming_call_notification(self, session, call_package, tokens):
+    def send_incoming_call_notification(self, session, call_package):
         """Send incoming call notification to listener via Channel Layer."""
         from channels.layers import get_channel_layer
         from asgiref.sync import async_to_sync
+        from talker.models import TalkerProfile
         
         try:
             channel_layer = get_channel_layer()
             notification_group = f'user_{session.listener.id}_notifications'
             
-            # Get listener's Agora config
-            package_type = call_package.package.package_type
-            from .agora_utils import agora_call_manager
-            video_config = agora_call_manager.get_call_config(package_type)
+            # Get talker's profile image URL
+            talker_image_url = None
+            try:
+                talker_profile = TalkerProfile.objects.get(user=session.talker)
+                if talker_profile.profile_image:
+                    talker_image_url = f'http://10.10.13.27:8005{talker_profile.profile_image.url}'
+            except TalkerProfile.DoesNotExist:
+                pass
             
-            # Send notification via Channel Layer with complete Agora details
+            # Send notification via Channel Layer
             async_to_sync(channel_layer.group_send)(
                 notification_group,
                 {
@@ -1554,19 +1556,10 @@ class CallSessionViewSet(viewsets.ReadOnlyModelViewSet):
                     'talker_id': session.talker.id,
                     'talker_email': session.talker.email,
                     'talker_name': session.talker.get_full_name(),
+                    'talker_image': talker_image_url,
                     'call_type': call_package.package.package_type,
                     'total_minutes': call_package.package.duration_minutes,
                     'created_at': session.created_at.isoformat(),
-                    # Include Agora details for listener
-                    'agora': {
-                        'app_id': tokens.get('app_id'),
-                        'channel_name': tokens.get('channel_name'),
-                        'token': tokens.get('listener_token'),  # Listener's token
-                        'uid': tokens.get('listener_uid'),  # Listener's uid
-                        'call_type': package_type,
-                        'expires_in': tokens.get('expires_in'),
-                        'video_config': video_config
-                    }
                 }
             )
             logger.info(f"Incoming call notification sent to listener {session.listener.id} for session {session.id}")

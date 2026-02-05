@@ -8,6 +8,7 @@ from django.db.models import Q
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from .models import Conversation, Message, FileAttachment
+from listener.models import ListenerBlockedTalker
 from .serializers import (
     ConversationSerializer, 
     ConversationListSerializer,
@@ -90,6 +91,12 @@ class ConversationViewSet(viewsets.ModelViewSet):
                 )
         
         # Get or create conversation in pending status
+        # Prevent creating conversation if listener has blocked this talker
+        if ListenerBlockedTalker.objects.filter(listener=listener, talker=request.user).exists():
+            return Response(
+                {'error': 'You cannot start a conversation with this listener'},
+                status=status.HTTP_403_FORBIDDEN
+            )
         conversation, created = Conversation.objects.get_or_create(
             listener=listener,
             talker=request.user,
@@ -242,6 +249,13 @@ class ConversationViewSet(viewsets.ModelViewSet):
     def upload_file(self, request, pk=None):
         """Upload a file to a conversation and broadcast via WebSocket."""
         conversation = self.get_object()
+
+        # Prevent file upload/messages if listener has blocked the talker
+        if ListenerBlockedTalker.objects.filter(listener=conversation.listener, talker=conversation.talker).exists():
+            return Response(
+                {'error': 'Messaging is blocked between these users'},
+                status=status.HTTP_403_FORBIDDEN
+            )
         
         file = request.FILES.get('file')
         if not file:
