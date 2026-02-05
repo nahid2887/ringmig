@@ -298,13 +298,17 @@ class CallConsumer(AsyncWebsocketConsumer):
     
     async def send_time_warning(self, remaining_minutes):
         """Send warning about remaining time."""
+        minutes = int(remaining_minutes)
+        seconds = int((remaining_minutes - minutes) * 60)
+        message = f'{minutes}:{seconds:02d} minutes remaining' if minutes > 0 else f'{seconds} seconds remaining'
+        
         await self.channel_layer.group_send(
             self.room_group_name,
             {
                 'type': 'call_event',
                 'data': {
                     'type': 'time_warning',
-                    'message': f'{int(remaining_minutes)} minutes remaining',
+                    'message': message,
                     'remaining_minutes': round(remaining_minutes, 2)
                 }
             }
