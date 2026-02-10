@@ -277,7 +277,7 @@ class CallConsumer(AsyncWebsocketConsumer):
         await self.update_session_status('timeout')
         await self.consume_booking_after_call()
         
-        # Notify all participants
+        # Notify all participants in call WebSocket
         await self.channel_layer.group_send(
             self.room_group_name,
             {
@@ -289,6 +289,22 @@ class CallConsumer(AsyncWebsocketConsumer):
                 }
             }
         )
+        
+        # Send same notification to listener through notifications WebSocket
+        if self.call_session and self.call_session.listener:
+            await self.channel_layer.group_send(
+                f'user_{self.call_session.listener.id}_notifications',
+                {
+                    'type': 'call_ending_notification',
+                    'data': {
+                        'type': 'call_ending',
+                        'message': 'Call time has expired',
+                        'reason': 'timeout',
+                        'session_id': self.call_session.id,
+                        'timestamp': timezone.now().isoformat()
+                    }
+                }
+            )
         
         # Wait a moment for message to be sent
         await asyncio.sleep(1)

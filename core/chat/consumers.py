@@ -558,6 +558,10 @@ class NotificationConsumer(AsyncWebsocketConsumer):
             'timestamp': event['timestamp']
         }))
     
+    async def call_ending_notification(self, event):
+        """Send call ending notification to user (call time expired)."""
+        await self.send(text_data=json.dumps(event['data']))
+    
     # Database operations
     @database_sync_to_async
     def get_user_from_token(self):

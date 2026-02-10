@@ -9,6 +9,11 @@ from .views import (
     ChangePasswordView,
     OTPVerificationView
 )
+from .dashboard_views import (
+    SuperAdminDashboardView,
+    DashboardUserStatsView,
+    DashboardRevenueStatsView
+)
 
 urlpatterns = [
     # OTP-based Registration Flow
@@ -19,4 +24,9 @@ urlpatterns = [
     path('profile/', UserProfileView.as_view(), name='profile'),
     path('change-password/', ChangePasswordView.as_view(), name='change-password'),
     path('token/refresh/', TokenRefreshView.as_view(), name='token-refresh'),
+    
+    # SuperAdmin Dashboard
+    path('dashboard/', SuperAdminDashboardView.as_view(), name='dashboard'),
+    path('dashboard/users/', DashboardUserStatsView.as_view(), name='dashboard-users'),
+    path('dashboard/revenue/', DashboardRevenueStatsView.as_view(), name='dashboard-revenue'),
 ]

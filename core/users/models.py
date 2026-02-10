@@ -30,6 +30,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     USER_TYPE_CHOICES = [
         ('talker', 'Talker'),
         ('listener', 'Listener'),
+        ('superadmin', 'Superadmin'),
     ]
 
     LANGUAGE_CHOICES = [

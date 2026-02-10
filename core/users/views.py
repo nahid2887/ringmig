@@ -230,7 +230,8 @@ class UserLoginView(APIView):
         request_body=UserLoginSerializer,
         responses={
             200: openapi.Response('Login successful'),
-            401: 'Invalid credentials'
+            401: 'Invalid credentials',
+            403: 'Account suspended'
         }
     )
     def post(self, request):
@@ -241,6 +242,40 @@ class UserLoginView(APIView):
             user = authenticate(request, email=email, password=password)
             
             if user is not None:
+                # Set user_type to superadmin if user is staff/superuser
+                if user.is_staff or user.is_superuser:
+                    if user.user_type != 'superadmin':
+                        user.user_type = 'superadmin'
+                        user.save(update_fields=['user_type'])
+                
+                # Check if talker account is suspended
+                if user.user_type == 'talker':
+                    from talker.models import TalkerSuspension
+                    
+                    suspension = TalkerSuspension.objects.filter(
+                        talker=user,
+                        is_active=True
+                    ).first()
+                    
+                    if suspension and suspension.is_suspension_active():
+                        remaining_days = suspension.get_remaining_days()
+                        return Response({
+                            'error': 'Account suspended',
+                            'message': f'Your account is suspended and will be available again in {remaining_days} day{"s" if remaining_days != 1 else ""}.',
+                            'suspension_details': {
+                                'reason': suspension.reason,
+                                'suspended_at': suspension.suspended_at,
+                                'resume_at': suspension.resume_at,
+                                'remaining_days': remaining_days,
+                                'days_suspended': suspension.days_suspended
+                            }
+                        }, status=status.HTTP_403_FORBIDDEN)
+                    
+                    # Auto-unsuspend if suspension period is over
+                    if suspension and not suspension.is_suspension_active():
+                        suspension.is_active = False
+                        suspension.save()
+                
                 refresh = RefreshToken.for_user(user)
                 return Response({
                     'message': 'Login successful',

@@ -1148,8 +1148,8 @@ class CallSessionViewSet(viewsets.ReadOnlyModelViewSet):
                         'quantity': 1,
                     }],
                     mode='payment',
-                    success_url="http://localhost:5174/dashboard/talker/payment-success-start-call",
-                    cancel_url=getattr(settings, 'FRONTEND_URL', 'http://localhost:5173') + f'/call/{call_session_id}',
+                    success_url='http://localhost:5174/dashboard/talker/payment-success-start-call',
+                    cancel_url=f"http://localhost:5174/call/{call_session_id}",
                     metadata={
                         'call_package_id': extend_package.id,
                         'call_session_id': call_session_id,

@@ -3,11 +3,14 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
+from drf_yasg.utils import swagger_auto_schema
+from drf_yasg import openapi
 from django.shortcuts import get_object_or_404
 from decimal import Decimal
 from .models import ListenerProfile, ListenerRating, ListenerBalance, ListenerBlockedTalker
 from .serializers import (ListenerProfileSerializer, ListenerListSerializer, ListenerRatingSerializer,
-                         BlockTalkerSerializer, UnblockTalkerSerializer, BlockedTalkerListSerializer)
+                         BlockTalkerSerializer, UnblockTalkerSerializer, BlockedTalkerListSerializer,
+                         ListenerCallAttemptSerializer, ListenerCallAttemptDetailSerializer)
 
 
 class IsListenerUser(IsAuthenticated):
@@ -212,6 +215,250 @@ class ListenerProfileViewSet(viewsets.ModelViewSet):
             'count': blocked_talkers.count(),
             'results': serializer.data
         })
+
+    @swagger_auto_schema(
+        operation_description="Get all call attempts for the authenticated listener",
+        responses={
+            200: openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    'count': openapi.Schema(type=openapi.TYPE_INTEGER),
+                    'results': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Schema(type=openapi.TYPE_OBJECT))
+                }
+            ),
+            401: "Unauthorized",
+            403: "Only listeners can access this endpoint"
+        },
+        tags=['Listener Call Attempts']
+    )
+    @action(detail=False, methods=['get'], url_path='call-attempts', permission_classes=[IsListenerUser])
+    def call_attempts(self, request):
+        """
+        Get all call attempts for the authenticated listener.
+        Shows previous calls and their details.
+        
+        Endpoint: GET /api/listener/profiles/call-attempts/
+        
+        Returns:
+        - List of all call sessions where this listener received calls
+        - Includes basic information about talker, call duration, status
+        - Sorted by most recent first
+        """
+        from chat.models import CallSession
+        
+        # Get all call sessions where this user is the listener
+        call_sessions = CallSession.objects.filter(
+            listener=request.user
+        ).select_related('talker', 'call_package__package').order_by('-created_at')
+        
+        # Pass actual CallSession objects to serializer
+        serializer = ListenerCallAttemptSerializer(call_sessions, many=True)
+        return Response({
+            'count': call_sessions.count(),
+            'results': serializer.data
+        }, status=status.HTTP_200_OK)
+
+    @swagger_auto_schema(
+        operation_description="Get detailed information about a specific call attempt",
+        manual_parameters=[
+            openapi.Parameter('call_session_id', openapi.IN_PATH, type=openapi.TYPE_INTEGER, 
+                            description='ID of the call session')
+        ],
+        responses={
+            200: openapi.Schema(type=openapi.TYPE_OBJECT),
+            401: "Unauthorized",
+            403: "Not authorized to view this call",
+            404: "Call session not found"
+        },
+        tags=['Listener Call Attempts']
+    )
+    @action(detail=False, methods=['get'], url_path='call-attempts/(?P<call_session_id>[0-9]+)', 
+            permission_classes=[IsListenerUser])
+    def call_attempt_detail(self, request, call_session_id=None):
+        """
+        Get detailed information about a specific call attempt.
+        
+        Endpoint: GET /api/listener/profiles/call-attempts/{call_session_id}/
+        
+        Returns:
+        - Complete call details including talker profile
+        - Call timing and duration information
+        - Call package details
+        - Call status and end reason
+        - Agora channel information
+        """
+        from chat.models import CallSession
+        
+        try:
+            call_session = CallSession.objects.select_related(
+                'talker', 'call_package__package'
+            ).get(id=call_session_id, listener=request.user)
+        except CallSession.DoesNotExist:
+            return Response(
+                {'error': 'Call session not found or you are not authorized to view it'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        serializer = ListenerCallAttemptDetailSerializer(call_session)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @swagger_auto_schema(
+        operation_description="Report a talker for inappropriate behavior",
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            required=['talker_id', 'reason'],
+            properties={
+                'talker_id': openapi.Schema(type=openapi.TYPE_INTEGER, description='ID of the talker to report'),
+                'reason': openapi.Schema(type=openapi.TYPE_STRING, enum=['harassment', 'inappropriate_content', 'scam', 'hate_speech', 'threatening', 'fake_profile', 'other']),
+                'description': openapi.Schema(type=openapi.TYPE_STRING, description='Detailed description of the issue')
+            }
+        ),
+        responses={
+            201: openapi.Schema(type=openapi.TYPE_OBJECT),
+            400: "Bad request - invalid data",
+            401: "Unauthorized",
+            403: "Only listeners can report talkers",
+            404: "Talker not found"
+        },
+        tags=['Listener Report Talker']
+    )
+    @action(detail=False, methods=['post'], url_path='report-talker', permission_classes=[IsListenerUser])
+    def report_talker(self, request):
+        """
+        Report a talker for inappropriate behavior.
+        
+        If a talker receives 3 or more reports, their account will be automatically suspended for 7 days.
+        During suspension:
+        - The talker will be logged out automatically
+        - They cannot login, receiving error message with remaining suspension days
+        - After 7 days, they can login normally again
+        
+        Endpoint: POST /api/listener/profiles/report-talker/
+        
+        Request body:
+        {
+            "talker_id": 10,
+            "reason": "harassment",
+            "description": "The talker was very rude and abusive during the call"
+        }
+        """
+        from talker.models import TalkerReport, TalkerSuspension
+        from talker.serializers import CreateTalkerReportSerializer
+        from django.contrib.auth import get_user_model
+        from django.utils import timezone
+        from datetime import timedelta
+        
+        User = get_user_model()
+        
+        # Validate request data
+        serializer = CreateTalkerReportSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        talker_id = serializer.validated_data['talker_id']
+        reason = serializer.validated_data['reason']
+        description = serializer.validated_data.get('description', '')
+        
+        # Get the talker
+        try:
+            talker = User.objects.get(id=talker_id, user_type='talker')
+        except User.DoesNotExist:
+            return Response(
+                {'error': f'Talker with ID {talker_id} not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Check if listener already reported this talker
+        existing_report = TalkerReport.objects.filter(
+            talker=talker,
+            reporter=request.user,
+            reason=reason
+        ).exists()
+        
+        if existing_report:
+            return Response(
+                {'message': 'You have already reported this talker for this reason'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Create the report
+        report = TalkerReport.objects.create(
+            talker=talker,
+            reporter=request.user,
+            reason=reason,
+            description=description,
+            status='pending'
+        )
+        
+        # Check total reports for this talker
+        total_reports = TalkerReport.objects.filter(talker=talker).count()
+        
+        # If 3 or more reports, suspend the talker
+        suspension_triggered = False
+        if total_reports >= 3:
+            # Check if already suspended
+            existing_suspension = TalkerSuspension.objects.filter(
+                talker=talker,
+                is_active=True
+            ).first()
+            
+            if not existing_suspension:
+                # Create suspension
+                suspension_days = 7
+                resume_at = timezone.now() + timedelta(days=suspension_days)
+                
+                suspension = TalkerSuspension.objects.create(
+                    talker=talker,
+                    reason='reports',
+                    resume_at=resume_at,
+                    days_suspended=suspension_days,
+                    is_active=True,
+                    notes=f'Account suspended due to {total_reports} reports from listeners'
+                )
+                
+                suspension_triggered = True
+                
+                # Logout the talker from all sessions
+                from rest_framework.authtoken.models import Token
+                from django.contrib.auth.models import Session
+                import json
+                
+                # Delete all tokens for this user
+                Token.objects.filter(user=talker).delete()
+                
+                # Delete all sessions for this user
+                sessions = Session.objects.all()
+                for session in sessions:
+                    data = session.get_decoded()
+                    if data.get('_auth_user_id') == str(talker.id):
+                        session.delete()
+        
+        # Prepare response
+        response_data = {
+            'message': 'Report submitted successfully',
+            'report': {
+                'id': report.id,
+                'talker_id': talker.id,
+                'talker_email': talker.email,
+                'reason': reason,
+                'status': 'pending',
+                'created_at': report.created_at
+            },
+            'total_reports_for_talker': total_reports,
+            'suspension_triggered': suspension_triggered
+        }
+        
+        if suspension_triggered:
+            response_data['message'] = f'Report submitted. Talker account suspended for 7 days due to {total_reports} reports.'
+            response_data['suspension_info'] = {
+                'reason': 'Multiple reports from listeners',
+                'days_suspended': 7,
+                'talker_will_be_logged_out': True,
+                'talker_cannot_login_for_days': 7
+            }
+        
+        return Response(response_data, status=status.HTTP_201_CREATED)
+
 
 
 class ListenerBalanceViewSet(viewsets.ReadOnlyModelViewSet):

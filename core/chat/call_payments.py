@@ -83,7 +83,6 @@ def create_call_package_payment_intent(call_package, payment_method_id=None):
         payment_intent = stripe.PaymentIntent.create(**payment_intent_data)
         
         # Create Checkout Session for payment link
-        frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:5174')
         checkout_session = stripe.checkout.Session.create(
             customer=stripe_customer.stripe_customer_id,
             payment_method_types=['card'],
@@ -100,7 +99,7 @@ def create_call_package_payment_intent(call_package, payment_method_id=None):
             }],
             mode='payment',
             success_url='http://localhost:5174/dashboard/talker/payment-success-start-call',
-            cancel_url=f'{frontend_url}/payment-cancelled',
+            cancel_url='http://localhost:5174/payment-cancelled',
             metadata={
                 'call_package_id': call_package.id,
                 'payment_intent_id': payment_intent.id,
