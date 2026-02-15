@@ -209,8 +209,8 @@ class ListenerProfileViewSet(viewsets.ModelViewSet):
         
         Endpoint: GET /api/listener/profiles/blocked_talkers/
         """
-        blocked_talkers = ListenerBlockedTalker.objects.filter(listener=request.user)
-        serializer = BlockedTalkerListSerializer(blocked_talkers, many=True)
+        blocked_talkers = ListenerBlockedTalker.objects.filter(listener=request.user).select_related('talker', 'talker__talker_profile')
+        serializer = BlockedTalkerListSerializer(blocked_talkers, many=True, context={'request': request})
         return Response({
             'count': blocked_talkers.count(),
             'results': serializer.data

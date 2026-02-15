@@ -128,20 +128,35 @@ class ChatConsumer(AsyncWebsocketConsumer):
             }))
             return
         
-        # Save message to database
-        message = await self.save_message(content, 'text')
+        # Check if messaging is blocked between these users
+        is_blocked = await self.check_if_blocked()
+        if is_blocked:
+            await self.send(text_data=json.dumps({
+                'type': 'error',
+                'message': 'You cannot message this user because they have blocked you or you have blocked them'
+            }))
+            return
         
-        # Serialize message
-        message_data = await self.serialize_message(message)
-        
-        # Send message to room group
-        await self.channel_layer.group_send(
-            self.room_group_name,
-            {
-                'type': 'chat_message',
-                'message': message_data
-            }
-        )
+        try:
+            # Save message to database
+            message = await self.save_message(content, 'text')
+            
+            # Serialize message
+            message_data = await self.serialize_message(message)
+            
+            # Send message to room group
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {
+                    'type': 'chat_message',
+                    'message': message_data
+                }
+            )
+        except PermissionError:
+            await self.send(text_data=json.dumps({
+                'type': 'error',
+                'message': 'You cannot message this user because they have blocked you or you have blocked them'
+            }))
     
     async def handle_file_message(self, data):
         """Handle file upload message."""
@@ -156,24 +171,44 @@ class ChatConsumer(AsyncWebsocketConsumer):
             }))
             return
         
-        # Save message and file to database
-        message = await self.save_file_message(file_data, filename, content)
+        # Check if messaging is blocked between these users
+        is_blocked = await self.check_if_blocked()
+        if is_blocked:
+            await self.send(text_data=json.dumps({
+                'type': 'error',
+                'message': 'You cannot send files to this user because they have blocked you or you have blocked them'
+            }))
+            return
         
-        # Serialize message
-        message_data = await self.serialize_message(message)
-        
-        # Send message to room group
-        await self.channel_layer.group_send(
-            self.room_group_name,
-            {
-                'type': 'chat_message',
-                'message': message_data
-            }
-        )
+        try:
+            # Save message and file to database
+            message = await self.save_file_message(file_data, filename, content)
+            
+            # Serialize message
+            message_data = await self.serialize_message(message)
+            
+            # Send message to room group
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {
+                    'type': 'chat_message',
+                    'message': message_data
+                }
+            )
+        except PermissionError:
+            await self.send(text_data=json.dumps({
+                'type': 'error',
+                'message': 'You cannot send files to this user because they have blocked you or you have blocked them'
+            }))
     
     async def handle_typing(self, data):
         """Handle typing indicator."""
         is_typing = data.get('is_typing', False)
+        
+        # Check if messaging is blocked
+        is_blocked = await self.check_if_blocked()
+        if is_blocked:
+            return  # Silently ignore typing indicators if blocked
         
         # Broadcast typing status to room group
         await self.channel_layer.group_send(
@@ -429,6 +464,22 @@ class ChatConsumer(AsyncWebsocketConsumer):
             }
         
         return msg_data
+    
+    @database_sync_to_async
+    def check_if_blocked(self):
+        """Check if users are blocked from messaging each other.
+        Returns True if the listener has blocked the talker."""
+        try:
+            conversation = Conversation.objects.get(id=self.conversation_id)
+            # Check if the listener has blocked the talker
+            if ListenerBlockedTalker.objects.filter(
+                listener=conversation.listener,
+                talker=conversation.talker
+            ).exists():
+                return True
+            return False
+        except Conversation.DoesNotExist:
+            return False
     
     @database_sync_to_async
     def mark_messages_read(self):

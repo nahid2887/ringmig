@@ -248,8 +248,37 @@ class BlockedTalkerListSerializer(serializers.ModelSerializer):
     """Serializer for listing blocked talkers."""
     talker_id = serializers.CharField(source='talker.id', read_only=True)
     talker_email = serializers.CharField(source='talker.email', read_only=True)
+    talker_name = serializers.SerializerMethodField(read_only=True)
+    talker_image = serializers.SerializerMethodField(read_only=True)
     blocked_at = serializers.DateTimeField(read_only=True)
     
     class Meta:
         model = ListenerBlockedTalker
-        fields = ['talker_id', 'talker_email', 'blocked_at']
+        fields = ['talker_id', 'talker_email', 'talker_name', 'talker_image', 'blocked_at']
+    
+    def get_talker_name(self, obj):
+        """Get talker's full name or email as fallback."""
+        if obj.talker:
+            # Try to get full_name from User model
+            if hasattr(obj.talker, 'full_name') and obj.talker.full_name:
+                return obj.talker.full_name
+            # Try to get from TalkerProfile
+            if hasattr(obj.talker, 'talker_profile'):
+                profile = obj.talker.talker_profile
+                full_name = f"{profile.first_name} {profile.last_name}".strip()
+                if full_name:
+                    return full_name
+            # Fallback to email
+            return obj.talker.email
+        return None
+    
+    def get_talker_image(self, obj):
+        """Get talker's profile image URL."""
+        if obj.talker and hasattr(obj.talker, 'talker_profile'):
+            profile = obj.talker.talker_profile
+            if profile.profile_image:
+                request = self.context.get('request')
+                if request:
+                    return request.build_absolute_uri(profile.profile_image.url)
+                return profile.profile_image.url
+        return None
