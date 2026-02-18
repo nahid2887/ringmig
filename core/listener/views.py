@@ -58,9 +58,23 @@ class ListenerProfileViewSet(viewsets.ModelViewSet):
         return ListenerProfileSerializer
 
     def get_object(self):
-        """Get the listener profile for the authenticated user or retrieve by pk."""
+        """Get the listener profile by user_id or profile id."""
+        pk = self.kwargs.get('pk')
+        
+        # For my_profile action, get current user's profile
         if self.action == 'my_profile':
             return get_object_or_404(ListenerProfile, user=self.request.user)
+        
+        # For detail actions (retrieve, update, destroy), try to get by user_id first
+        # This allows endpoints like /api/listener/profiles/<user_id>/ to work
+        if pk:
+            try:
+                # Try to get by user_id (user's ID)
+                return get_object_or_404(ListenerProfile, user_id=int(pk))
+            except (ValueError, ListenerProfile.DoesNotExist):
+                # If not found by user_id, try by ListenerProfile.id
+                return super().get_object()
+        
         return super().get_object()
     
     def get_queryset(self):
@@ -68,6 +82,31 @@ class ListenerProfileViewSet(viewsets.ModelViewSet):
         if self.action == 'available_listeners':
             return ListenerProfile.objects.filter(is_available=True)
         return ListenerProfile.objects.all()
+
+    def destroy(self, request, *args, **kwargs):
+        """Delete listener profile and deactivate the associated user account.
+        
+        When a listener profile is deleted, the user account is marked as inactive
+        so they cannot login again.
+        """
+        listener_profile = self.get_object()
+        user = listener_profile.user
+        
+        # Delete the profile
+        listener_profile.delete()
+        
+        # Deactivate the user account
+        user.is_active = False
+        user.save()
+        
+        return Response(
+            {
+                'message': f'Listener profile deleted and account deactivated',
+                'user_id': user.id,
+                'email': user.email
+            },
+            status=status.HTTP_204_NO_CONTENT
+        )
 
     @action(detail=False, methods=['get'], permission_classes=[AllowAny])
     def available(self, request):

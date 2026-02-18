@@ -43,6 +43,31 @@ class TalkerProfileViewSet(viewsets.ModelViewSet):
         """Get the talker profile for the authenticated user."""
         return get_object_or_404(TalkerProfile, user=self.request.user)
 
+    def destroy(self, request, *args, **kwargs):
+        """Delete talker profile and deactivate the associated user account.
+        
+        When a talker profile is deleted, the user account is marked as inactive
+        so they cannot login again.
+        """
+        talker_profile = self.get_object()
+        user = talker_profile.user
+        
+        # Delete the profile
+        talker_profile.delete()
+        
+        # Deactivate the user account
+        user.is_active = False
+        user.save()
+        
+        return Response(
+            {
+                'message': f'Talker profile deleted and account deactivated',
+                'user_id': user.id,
+                'email': user.email
+            },
+            status=status.HTTP_204_NO_CONTENT
+        )
+
     @action(detail=False, methods=['get', 'put', 'patch'], permission_classes=[IsTalkerUser], parser_classes=[MultiPartParser, FormParser])
     def my_profile(self, request):
         """Get or update the authenticated talker user's profile."""

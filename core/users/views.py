@@ -242,6 +242,13 @@ class UserLoginView(APIView):
             user = authenticate(request, email=email, password=password)
             
             if user is not None:
+                # Check if user account is active (not deleted)
+                if not user.is_active:
+                    return Response({
+                        'error': 'Account deleted',
+                        'message': 'This account has been deleted and cannot be used. Please contact support if you believe this is a mistake.'
+                    }, status=status.HTTP_403_FORBIDDEN)
+                
                 # Set user_type to superadmin if user is staff/superuser
                 if user.is_staff or user.is_superuser:
                     if user.user_type != 'superadmin':
