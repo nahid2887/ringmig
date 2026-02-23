@@ -134,7 +134,14 @@ class BookingViewSet(viewsets.ModelViewSet):
                 amount_cents = int(package.price * 100)  # Convert to cents
                 
                 # Get frontend URLs (adjust based on your frontend URL)
-                frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:3000')
+                frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:5173')
+                
+                # Ensure URL is properly formatted for Stripe
+                if not frontend_url.startswith(('http://', 'https://')):
+                    frontend_url = f'http://{frontend_url}'
+                    
+                # Remove any trailing slash for consistent URL construction
+                frontend_url = frontend_url.rstrip('/')
                 
                 checkout_session = stripe.checkout.Session.create(
                     payment_method_types=['card', 'link'],  # Allow card and Link payment
@@ -154,8 +161,8 @@ class BookingViewSet(viewsets.ModelViewSet):
                     ],
                     customer_email=talker.email,
                     mode='payment',
-                    success_url=f"{frontend_url}/payment/success?booking_id={booking.id}&session_id={{CHECKOUT_SESSION_ID}}",
-                    cancel_url=f"{frontend_url}/payment/cancel?booking_id={booking.id}",
+                    success_url=f'{frontend_url}/payment/success?booking_id={booking.id}&session_id={{CHECKOUT_SESSION_ID}}',
+                    cancel_url=f'{frontend_url}/payment/cancel?booking_id={booking.id}',
                     metadata={
                         'booking_id': booking.id,
                         'talker_id': talker.id,
@@ -941,11 +948,38 @@ class StripeWebhookView(APIView):
                 
                 if listener_id and payout_amount:
                     from chat.call_models import ListenerPayout
-                    from users.models import CustomUser
+                    from django.contrib.auth import get_user_model
                     from decimal import Decimal
                     
-                    listener = CustomUser.objects.get(id=listener_id)
+                    User = get_user_model()
+                    
+                    listener = User.objects.get(id=listener_id)
                     payout_amount = Decimal(payout_amount)
+                    
+                    # Now deduct from ListenerBalance since payout is confirmed
+                    from listener.models import ListenerBalance
+                    try:
+                        balance_account = ListenerBalance.objects.get(listener=listener)
+                        old_balance = balance_account.available_balance
+                        
+                        logger.info(f"💳 Processing payout: {listener.email}, Amount: ${payout_amount}, Current balance: ${old_balance}")
+                        
+                        if balance_account.deduct(payout_amount):
+                            new_balance = balance_account.available_balance
+                            logger.info(f"✅ Deducted ${payout_amount} from {listener.email}'s balance: ${old_balance} -> ${new_balance}")
+                        else:
+                            logger.error(f"❌ Could not deduct ${payout_amount} from {listener.email}'s balance (insufficient funds: ${old_balance})")
+                            
+                            # Still process the payout but flag the issue
+                            logger.error(f"⚠️ BALANCE DEFICIT: Listener {listener.email} withdrew ${payout_amount} but only had ${old_balance}")
+                            
+                    except ListenerBalance.DoesNotExist:
+                        logger.error(f"❌ No balance account found for listener {listener.email} - creating one with zero balance")
+                        ListenerBalance.objects.create(
+                            listener=listener,
+                            available_balance=Decimal('0.00'),
+                            total_earned=Decimal('0.00')
+                        )
                     
                     # Update pending payouts to completed
                     # Match by session ID that was stored when creating the payout link
@@ -1138,12 +1172,23 @@ class StripeWebhookView(APIView):
             # Handle call package payment
             if call_package_id:
                 from chat.call_models import CallPackage
+                from payment.models import RevenueTracking
                 
                 call_package = CallPackage.objects.get(id=call_package_id)
                 call_package.stripe_payment_intent_id = payment_intent['id']
                 call_package.stripe_charge_id = payment_intent.get('latest_charge', '')
                 call_package.status = 'confirmed'
                 call_package.save()
+                
+                # Create revenue tracking entry for financial reporting
+                try:
+                    revenue_tracking = RevenueTracking.create_from_call_package(
+                        call_package=call_package,
+                        stripe_payment_intent_id=payment_intent['id']
+                    )
+                    logger.info(f"📊 Revenue tracking created: Total ${revenue_tracking.total_amount} = Admin ${revenue_tracking.admin_portion} + Listener ${revenue_tracking.listener_portion}")
+                except Exception as e:
+                    logger.error(f"Failed to create revenue tracking for call package {call_package_id}: {str(e)}")
                 
                 logger.info(f"✓ Payment succeeded for call package {call_package_id}")
                 return Response({'status': 'processed'})

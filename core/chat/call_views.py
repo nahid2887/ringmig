@@ -29,10 +29,11 @@ from .call_payments import (
 
 # Import Booking model
 try:
-    from payment.models import Booking, Payment
+    from payment.models import Booking, Payment, StripeListenerAccount
 except ImportError:
     Booking = None
     Payment = None
+    StripeListenerAccount = None
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
@@ -1898,6 +1899,7 @@ class ListenerPayoutViewSet(viewsets.ReadOnlyModelViewSet):
     def balance(self, request):
         """Get listener's total payout balance."""
         from django.db.models import Sum
+        from listener.models import ListenerBalance
         
         listener = request.user
         if listener.user_type != 'listener':
@@ -1906,16 +1908,26 @@ class ListenerPayoutViewSet(viewsets.ReadOnlyModelViewSet):
                 status=status.HTTP_403_FORBIDDEN
             )
         
+        # Get or create balance from ListenerBalance model (primary balance system)
+        try:
+            balance_account = ListenerBalance.objects.get(listener=listener)
+            available_balance = balance_account.available_balance
+            total_earned = balance_account.total_earned
+        except ListenerBalance.DoesNotExist:
+            # Create balance account if it doesn't exist
+            balance_account = ListenerBalance.objects.create(
+                listener=listener,
+                available_balance=Decimal('0.00'),
+                total_earned=Decimal('0.00')
+            )
+            available_balance = Decimal('0.00')
+            total_earned = Decimal('0.00')
+        
+        # Get additional transaction details from ListenerPayout for reference
         payouts_qs = ListenerPayout.objects.filter(listener=listener)
         
-        # Calculate various totals
         # Payouts waiting for call to end (payment confirmed, call in progress)
         waiting_for_call = payouts_qs.filter(status='processing').aggregate(
-            total=Sum('amount')
-        )['total'] or Decimal('0.00')
-        
-        # Payouts earned and ready to withdraw
-        earned_ready = payouts_qs.filter(status='earned').aggregate(
             total=Sum('amount')
         )['total'] or Decimal('0.00')
         
@@ -1936,11 +1948,11 @@ class ListenerPayoutViewSet(viewsets.ReadOnlyModelViewSet):
         
         return Response({
             'waiting_for_call_to_end': str(waiting_for_call),
-            'available_balance': str(earned_ready),
+            'available_balance': str(available_balance),  # From ListenerBalance
             'pending_withdrawal': str(pending),
             'total_completed': str(completed),
             'total_cancelled': str(cancelled),
-            'total_earned': str(waiting_for_call + earned_ready + pending + completed),
+            'total_earned': str(total_earned),  # From ListenerBalance
             'payout_count': payouts_qs.filter(status='completed').count()
         })
     
@@ -2443,7 +2455,7 @@ class ListenerPayoutViewSet(viewsets.ReadOnlyModelViewSet):
             )
     
     @swagger_auto_schema(
-        operation_description="Generate Stripe payout link - listener enters card details and receives money",
+        operation_description="Create a direct payout transfer to listener's Stripe Connect account",
         request_body=openapi.Schema(
             type=openapi.TYPE_OBJECT,
             properties={
@@ -2454,7 +2466,17 @@ class ListenerPayoutViewSet(viewsets.ReadOnlyModelViewSet):
     )
     @action(detail=False, methods=['post'], url_path='create-payout-link')
     def create_payout_link(self, request):
-        """Generate Stripe link for listener to enter card details and receive payout."""
+        """Create a direct Stripe transfer to listener's connected account.
+        
+        This endpoint:
+        1. Validates listener has sufficient balance
+        2. Creates Stripe Express Account if needed
+        3. Checks account onboarding status
+        4. Creates direct transfer to listener's Stripe Connect account
+        5. Records payout in database
+        6. Notifies admin of withdrawal
+        """
+        from listener.models import ListenerBalance
         from django.db.models import Sum
         
         listener = request.user
@@ -2464,27 +2486,33 @@ class ListenerPayoutViewSet(viewsets.ReadOnlyModelViewSet):
                 status=status.HTTP_403_FORBIDDEN
             )
         
-        amount = request.data.get('amount')
+        amount_str = request.data.get('amount')
         
-        if not amount:
+        if not amount_str:
             return Response(
                 {'error': 'amount is required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
         try:
-            amount = Decimal(str(amount))
+            amount = Decimal(str(amount_str))
         except:
             return Response(
                 {'error': 'Invalid amount'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Get available balance
-        available = ListenerPayout.objects.filter(
-            listener=listener,
-            status='earned'
-        ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+        # Get available balance from ListenerBalance model
+        try:
+            balance_account = ListenerBalance.objects.get(listener=listener)
+            available = balance_account.available_balance
+        except ListenerBalance.DoesNotExist:
+            balance_account = ListenerBalance.objects.create(
+                listener=listener,
+                available_balance=Decimal('0.00'),
+                total_earned=Decimal('0.00')
+            )
+            available = Decimal('0.00')
         
         if amount > available:
             return Response(
@@ -2499,61 +2527,348 @@ class ListenerPayoutViewSet(viewsets.ReadOnlyModelViewSet):
             )
         
         try:
-            frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:3000')
+            # Get or create Stripe Connect account for listener
+            stripe_account_id = None
+            try:
+                stripe_account = StripeListenerAccount.objects.get(listener=listener)
+                stripe_account_id = stripe_account.stripe_account_id
+            except StripeListenerAccount.DoesNotExist:
+                # Create new Stripe Express account for listener
+                listener_name = listener.full_name or listener.username
+                name_parts = listener_name.split(" ", 1)
+                first_name = name_parts[0] if name_parts else listener_name
+                last_name = name_parts[1] if len(name_parts) > 1 else ""
+                
+                try:
+                    account = stripe.Account.create(
+                        type="express",
+                        country="US",
+                        email=listener.email,
+                        capabilities={"transfers": {"requested": True}},
+                        business_type="individual",
+                        individual={
+                            "first_name": first_name,
+                            "last_name": last_name,
+                        },
+                    )
+                    stripe_account_id = account.id
+                    StripeListenerAccount.objects.create(
+                        listener=listener,
+                        stripe_account_id=stripe_account_id,
+                        is_verified=False
+                    )
+                    logger.info(f"Created Stripe Express account for {listener.email}: {stripe_account_id}")
+                except stripe.error.StripeError as e:
+                    error_msg = str(e)
+                    if "signed up for Connect" in error_msg or "Connect" in error_msg:
+                        return Response({
+                            'error': 'Stripe Connect not enabled',
+                            'detail': 'Your Stripe account needs to have Connect enabled. Please contact support or enable Stripe Connect in your Stripe dashboard.',
+                            'stripe_error': error_msg
+                        }, status=status.HTTP_400_BAD_REQUEST)
+                    logger.error(f"Failed to create Stripe account: {error_msg}")
+                    raise
             
-            # Create Stripe customer
-            customer = stripe.Customer.create(
-                email=listener.email,
-                name=listener.email,
-                metadata={
-                    'listener_id': listener.id,
-                    'payout_amount': str(amount)
-                }
+            # Retrieve account and check onboarding status
+            account = stripe.Account.retrieve(stripe_account_id)
+            currently_due = account.get("requirements", {}).get("currently_due") or []
+            charges_enabled = account.get("charges_enabled", False)
+            
+            if currently_due or not charges_enabled:
+                # Account needs onboarding
+                account_link = stripe.AccountLink.create(
+                    account=stripe_account_id,
+                    refresh_url=f"{getattr(settings, 'BACKEND_URL', 'https://backend.example.com')}/listener/reauth",
+                    return_url=f"{getattr(settings, 'BACKEND_URL', 'https://backend.example.com')}/listener/dashboard",
+                    type="account_onboarding",
+                )
+                return Response({
+                    'message': 'Complete Stripe onboarding.',
+                    'onboarding_url': account_link.url
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            if amount > 0:
+                try:
+                    listener_name = listener.full_name or listener.username
+                    
+                    # Create direct transfer to listener's Stripe Connect account
+                    transfer = stripe.Transfer.create(
+                        amount=int(amount * 100),  # Convert to cents
+                        currency="usd",
+                        destination=stripe_account_id,
+                        description=f"Payout for {listener_name}",
+                    )
+                    
+                    # Mark payouts as completed in atomic transaction
+                    with transaction.atomic():
+                        payouts_to_complete = ListenerPayout.objects.filter(
+                            listener=listener,
+                            status='earned'
+                        ).order_by('earned_at')
+                        
+                        remaining = amount
+                        
+                        for payout in payouts_to_complete:
+                            if remaining <= 0:
+                                break
+                            
+                            if payout.amount <= remaining:
+                                # Complete full payout
+                                payout.status = 'completed'
+                                payout.stripe_payout_id = transfer.id
+                                payout.payout_completed_at = timezone.now()
+                                payout.save(update_fields=['status', 'stripe_payout_id', 'payout_completed_at', 'updated_at'])
+                                remaining -= payout.amount
+                            else:
+                                # Partial - split the payout
+                                leftover_amount = payout.amount - remaining
+                                
+                                # Create new record for leftover
+                                ListenerPayout.objects.create(
+                                    listener=listener,
+                                    call_package=payout.call_package,
+                                    amount=leftover_amount,
+                                    status='earned',
+                                    earned_at=payout.earned_at,
+                                    notes=f'Split from payout #{payout.id}'
+                                )
+                                
+                                # Complete original payout with partial amount
+                                payout.amount = remaining
+                                payout.status = 'completed'
+                                payout.stripe_payout_id = transfer.id
+                                payout.payout_completed_at = timezone.now()
+                                payout.save(update_fields=['amount', 'status', 'stripe_payout_id', 'payout_completed_at', 'updated_at'])
+                                remaining = 0
+                        
+                        # Update balance
+                        balance_account.available_balance -= amount
+                        balance_account.save(update_fields=['available_balance', 'updated_at'])
+                    
+                    logger.info(f"✓ Payout completed for {listener.email}: ${amount}, Transfer: {transfer.id}")
+                    
+                    return Response({
+                        'detail': 'Withdrawal successful.',
+                        'transfer_id': transfer.id,
+                        'amount': str(amount),
+                        'new_balance': str(available - amount),
+                    }, status=status.HTTP_200_OK)
+                
+                except (stripe.error.StripeError, Exception) as e:
+                    logger.error(f"Payout error: {str(e)}")
+                    return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            
+            return Response({'detail': 'Listener onboarded. No withdrawal requested.'}, status=status.HTTP_200_OK)
+        
+        except stripe.error.StripeError as e:
+            logger.error(f"Stripe error: {str(e)}")
+            return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            logger.error(f"Error processing payout: {str(e)}", exc_info=True)
+            return Response({'detail': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+            return Response(
+                {'error': f'Failed to create payout link: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    @swagger_auto_schema(
+        operation_description="Create a direct payout transfer to listener's Stripe Connect account",
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            properties={
+                'amount': openapi.Schema(type=openapi.TYPE_STRING, description='Amount to payout'),
+            },
+            required=['amount']
+        )
+    )
+    @action(detail=False, methods=['post'], url_path='make-payout')
+    def make_payout(self, request):
+        """Create a direct Stripe transfer to listener's connected account (Stripe Connect).
+        
+        Requires:
+        - amount: decimal amount to transfer
+        
+        Process:
+        1. Validate listener has sufficient balance
+        2. Create Stripe Express Account if needed
+        3. Check account onboarding status
+        4. Create direct transfer to listener's Stripe Connect account
+        5. Record payout in database
+        6. Notify admin of withdrawal
+        """
+        from listener.models import ListenerBalance
+        from django.db.models import Sum
+        from channels.layers import get_channel_layer
+        from asgiref.sync import async_to_sync
+        from users.models import NotificationRoom, Notification, AdminRole
+        
+        listener = request.user
+        if listener.user_type != 'listener':
+            return Response(
+                {'error': 'Only listeners can request payouts'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        amount_str = request.data.get('amount')
+        
+        if not amount_str:
+            return Response(
+                {'error': 'amount is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            amount = Decimal(str(amount_str))
+        except:
+            return Response(
+                {'error': 'Invalid amount format'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if amount <= 0:
+            return Response(
+                {'error': 'Amount must be greater than 0'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Validate available balance
+        try:
+            balance_account = ListenerBalance.objects.get(listener=listener)
+            available_balance = balance_account.available_balance
+        except ListenerBalance.DoesNotExist:
+            balance_account = ListenerBalance.objects.create(
+                listener=listener,
+                available_balance=Decimal('0.00'),
+                total_earned=Decimal('0.00')
+            )
+            available_balance = Decimal('0.00')
+        
+        if amount > available_balance:
+            return Response(
+                {
+                    'error': f'Insufficient balance. Available: ${available_balance}',
+                    'available_balance': str(available_balance),
+                    'requested_amount': str(amount)
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            # Get or create Stripe Connect account for listener
+            stripe_account_id = None
+            try:
+                stripe_account = StripeListenerAccount.objects.get(listener=listener)
+                stripe_account_id = stripe_account.stripe_account_id
+            except StripeListenerAccount.DoesNotExist:
+                # Create new Stripe Express account for listener
+                listener_name = listener.full_name or listener.username
+                name_parts = listener_name.split(" ", 1)
+                first_name = name_parts[0] if name_parts else listener_name
+                last_name = name_parts[1] if len(name_parts) > 1 else ""
+                
+                try:
+                    account = stripe.Account.create(
+                        type="express",
+                        country="US",
+                        email=listener.email,
+                        capabilities={"transfers": {"requested": True}},
+                        business_type="individual",
+                        individual={
+                            "first_name": first_name,
+                            "last_name": last_name,
+                        },
+                    )
+                    stripe_account_id = account.id
+                    
+                    # Save Stripe account record
+                    StripeListenerAccount.objects.create(
+                        listener=listener,
+                        stripe_account_id=stripe_account_id,
+                        is_verified=False
+                    )
+                    logger.info(f"Created Stripe Express account for {listener.email}: {stripe_account_id}")
+                except stripe.error.StripeError as e:
+                    error_msg = str(e)
+                    if "signed up for Connect" in error_msg or "Connect" in error_msg:
+                        return Response({
+                            'error': 'Stripe Connect not enabled',
+                            'detail': 'Your Stripe account needs to have Connect enabled. Please contact support or enable Stripe Connect in your Stripe dashboard.',
+                            'stripe_error': error_msg
+                        }, status=status.HTTP_400_BAD_REQUEST)
+                    logger.error(f"Failed to create Stripe account: {error_msg}")
+                    return Response(
+                        {'error': f'Failed to create Stripe account: {error_msg}'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            
+            # Check Stripe account onboarding status
+            try:
+                account = stripe.Account.retrieve(stripe_account_id)
+                currently_due = account.get("requirements", {}).get("currently_due", [])
+                charges_enabled = account.get("charges_enabled", False)
+                
+                if currently_due or not charges_enabled:
+                    # Account needs onboarding
+                    account_link = stripe.AccountLink.create(
+                        account=stripe_account_id,
+                        refresh_url=f"{getattr(settings, 'BACKEND_URL', 'https://backend.example.com')}/listener/account-refresh",
+                        return_url=f"{getattr(settings, 'BACKEND_URL', 'https://backend.example.com')}/listener/dashboard",
+                        type="account_onboarding",
+                    )
+                    logger.warning(f"Stripe account {stripe_account_id} requires onboarding")
+                    return Response(
+                        {
+                            'error': 'Your Stripe account requires onboarding before withdrawals',
+                            'message': 'Complete Stripe onboarding',
+                            'onboarding_url': account_link.url,
+                            'status': 'onboarding_required'
+                        },
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            except stripe.error.StripeError as e:
+                logger.error(f"Failed to retrieve Stripe account: {str(e)}")
+                return Response(
+                    {'error': f'Failed to verify Stripe account: {str(e)}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Create direct transfer to listener's Stripe Connect account
+            transfer = stripe.Transfer.create(
+                amount=int(amount * 100),  # Convert to cents
+                currency="usd",
+                destination=stripe_account_id,
+                description=f"Payout to {listener_name}",
             )
             
-            # Create Checkout Session for payment method collection
-            checkout_session = stripe.checkout.Session.create(
-                customer=customer.id,
-                mode='setup',
-                payment_method_types=['card'],
-                success_url=f'{frontend_url}/payout-success?session_id={{CHECKOUT_SESSION_ID}}',
-                cancel_url=f'{frontend_url}/payout-cancelled',
-                metadata={
-                    'listener_id': listener.id,
-                    'payout_amount': str(amount),
-                    'type': 'payout_collection'
-                }
-            )
+            logger.info(f"Created Stripe transfer {transfer.id} for {listener.email}: ${amount}")
             
-            # Mark payouts as pending - only up to the requested amount
+            # Mark payouts as completed and update balance
             with transaction.atomic():
-                payouts_to_process = ListenerPayout.objects.filter(
+                # Get earned payouts and mark as completed in order
+                payouts_to_complete = ListenerPayout.objects.filter(
                     listener=listener,
                     status='earned'
                 ).order_by('earned_at')
                 
                 remaining = amount
-                processed_amount = Decimal('0.00')
                 
-                for payout in payouts_to_process:
+                for payout in payouts_to_complete:
                     if remaining <= 0:
                         break
                     
                     if payout.amount <= remaining:
-                        # Full payout goes to pending
-                        payout.status = 'pending'
-                        payout.payout_requested_at = timezone.now()
-                        payout.stripe_payout_id = checkout_session.id
-                        payout.notes = f'Awaiting card details from Stripe link'
-                        payout.save(update_fields=['status', 'payout_requested_at', 'stripe_payout_id', 'notes', 'updated_at'])
+                        # Complete full payout
+                        payout.status = 'completed'
+                        payout.stripe_payout_id = transfer.id
+                        payout.payout_completed_at = timezone.now()
+                        payout.notes = f'Transferred via Stripe transfer {transfer.id}'
+                        payout.save(update_fields=['status', 'stripe_payout_id', 'payout_completed_at', 'notes', 'updated_at'])
                         remaining -= payout.amount
-                        processed_amount += payout.amount
                     else:
-                        # Need to split this payout - only take what we need
-                        # Create a new payout record for the remaining earned amount
+                        # Partial completion - split the payout
                         leftover_amount = payout.amount - remaining
                         
-                        # Create new record for leftover (stays as earned)
+                        # Create new record for leftover (stays earned)
                         ListenerPayout.objects.create(
                             listener=listener,
                             call_package=payout.call_package,
@@ -2563,37 +2878,39 @@ class ListenerPayoutViewSet(viewsets.ReadOnlyModelViewSet):
                             notes=f'Split from payout #{payout.id}'
                         )
                         
-                        # Update original payout with partial amount
+                        # Complete original payout with partial amount
                         payout.amount = remaining
-                        payout.status = 'pending'
-                        payout.payout_requested_at = timezone.now()
-                        payout.stripe_payout_id = checkout_session.id
-                        payout.notes = f'Partial withdrawal - awaiting card details'
-                        payout.save(update_fields=['amount', 'status', 'payout_requested_at', 'stripe_payout_id', 'notes', 'updated_at'])
-                        
-                        processed_amount += remaining
+                        payout.status = 'completed'
+                        payout.stripe_payout_id = transfer.id
+                        payout.payout_completed_at = timezone.now()
+                        payout.notes = f'Partial transfer via {transfer.id}'
+                        payout.save(update_fields=['amount', 'status', 'stripe_payout_id', 'payout_completed_at', 'notes', 'updated_at'])
                         remaining = 0
+                
+                # Update listener's balance
+                balance_account.available_balance -= amount
+                balance_account.save(update_fields=['available_balance', 'updated_at'])
+                logger.info(f"Updated balance for {listener.email}: -${amount}, New balance: ${balance_account.available_balance}")
             
-            logger.info(f"✓ Payout link created for {listener.email}: ${amount}, Session: {checkout_session.id}")
+            logger.info(f"✓ Payout completed for {listener.email}: ${amount}")
             
             return Response({
-                'message': f'Payout link created for ${amount}',
+                'message': 'Withdrawal successful',
                 'amount': str(amount),
-                'stripe_link': checkout_session.url,
-                'session_id': checkout_session.id,
-                'instructions': 'Click the link and enter your card details. Money will be sent instantly.',
-                'status': 'pending'
+                'transfer_id': transfer.id,
+                'new_balance': str(available_balance - amount),
+                'status': 'completed'
             }, status=status.HTTP_200_OK)
         
         except stripe.error.StripeError as e:
-            logger.error(f"Stripe payout link error: {str(e)}")
+            logger.error(f"Stripe error during payout: {str(e)}")
             return Response(
                 {'error': f'Stripe error: {str(e)}'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         except Exception as e:
-            logger.error(f"Error creating payout link: {str(e)}")
+            logger.error(f"Error processing payout: {str(e)}", exc_info=True)
             return Response(
-                {'error': f'Failed to create payout link: {str(e)}'},
+                {'error': f'Failed to process payout: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )

@@ -217,6 +217,82 @@ class Payment(models.Model):
         return f"Payment #{self.id} - Booking #{self.booking.id} ({self.status})"
 
 
+class RevenueTracking(models.Model):
+    """Track revenue splits between admin and listeners for better financial reporting."""
+    
+    # Transaction reference
+    stripe_payment_intent_id = models.CharField(max_length=255, unique=True)
+    
+    # Transaction details
+    total_amount = models.DecimalField(max_digits=10, decimal_places=2)
+    admin_portion = models.DecimalField(max_digits=10, decimal_places=2)
+    listener_portion = models.DecimalField(max_digits=10, decimal_places=2)
+    
+    # Percentages (for verification)
+    admin_percentage = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('10.00'))
+    listener_percentage = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('90.00'))
+    
+    # Related objects
+    talker = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='revenue_payments',
+        limit_choices_to={'user_type': 'talker'}
+    )
+    listener = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='revenue_earnings',
+        limit_choices_to={'user_type': 'listener'}
+    )
+    
+    # Call reference
+    call_package = models.ForeignKey(
+        'chat.CallPackage',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='revenue_tracking'
+    )
+    
+    # Metadata
+    transaction_type = models.CharField(
+        max_length=20,
+        choices=[
+            ('call', 'Call Payment'),
+            ('extension', 'Call Extension'),
+        ],
+        default='call'
+    )
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        verbose_name = 'Revenue Tracking'
+        verbose_name_plural = 'Revenue Tracking'
+        ordering = ['-created_at']
+        
+    def __str__(self):
+        return f"${self.total_amount} - Admin: ${self.admin_portion}, Listener: ${self.listener_portion}"
+    
+    @classmethod
+    def create_from_call_package(cls, call_package, stripe_payment_intent_id):
+        """Create revenue tracking entry from a call package."""
+        return cls.objects.create(
+            stripe_payment_intent_id=stripe_payment_intent_id,
+            total_amount=call_package.total_amount,
+            admin_portion=call_package.admin_amount,
+            listener_portion=call_package.listener_amount,
+            admin_percentage=Decimal('10.00'),
+            listener_percentage=Decimal('90.00'),
+            talker=call_package.talker,
+            listener=call_package.listener,
+            call_package=call_package,
+            transaction_type='extension' if call_package.is_extension else 'call'
+        )
+
+
 class ListenerPayout(models.Model):
     """Tracks payouts to listeners."""
     

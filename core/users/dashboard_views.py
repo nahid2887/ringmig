@@ -11,6 +11,9 @@ from datetime import timedelta
 from decimal import Decimal
 from .dashboard_serializers import SuperAdminDashboardSerializer
 
+# Import models
+from payment.models import RevenueTracking
+
 User = get_user_model()
 
 
@@ -278,12 +281,22 @@ class DashboardRevenueStatsView(APIView):
             )
             total_payment_revenue = payments.aggregate(Sum('amount'))['amount__sum'] or Decimal('0.00')
             
-            # Get call package revenue
+            # Get call package revenue with admin/listener breakdown
             call_packages = CallPackage.objects.filter(
                 status__in=['completed', 'confirmed'],
                 purchased_at__gte=start_date
             )
             total_call_revenue = call_packages.aggregate(Sum('total_amount'))['total_amount__sum'] or Decimal('0.00')
+            admin_revenue = call_packages.aggregate(Sum('admin_amount'))['admin_amount__sum'] or Decimal('0.00')
+            listener_revenue = call_packages.aggregate(Sum('listener_amount'))['listener_amount__sum'] or Decimal('0.00')
+            
+            # Get revenue tracking data for enhanced analytics
+            from payment.models import RevenueTracking
+            revenue_tracking = RevenueTracking.objects.filter(
+                created_at__gte=start_date
+            )
+            tracked_admin_revenue = revenue_tracking.aggregate(Sum('admin_portion'))['admin_portion__sum'] or Decimal('0.00')
+            tracked_listener_revenue = revenue_tracking.aggregate(Sum('listener_portion'))['listener_portion__sum'] or Decimal('0.00')
             total_call_commission = call_packages.aggregate(Sum('app_fee'))['app_fee__sum'] or Decimal('0.00')
             total_call_listener_earnings = call_packages.aggregate(Sum('listener_amount'))['listener_amount__sum'] or Decimal('0.00')
             

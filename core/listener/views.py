@@ -529,8 +529,55 @@ class ListenerBalanceViewSet(viewsets.ReadOnlyModelViewSet):
             defaults={'available_balance': Decimal('0.00'), 'total_earned': Decimal('0.00')}
         )
         
+        # For debugging - also get payout data for comparison
+        from django.db.models import Sum
+        from chat.call_models import ListenerPayout, CallPackage
+        
+        # Calculate what balance should be based on payout data
+        earned_payouts = ListenerPayout.objects.filter(
+            listener=user,
+            status='earned',
+            is_extension=False
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+        
+        extension_earnings = CallPackage.objects.filter(
+            listener=user,
+            is_extension=True,
+            status__in=['confirmed', 'used', 'completed']
+        ).aggregate(total=Sum('listener_amount'))['total'] or Decimal('0.00')
+        
+        completed_withdrawals = ListenerPayout.objects.filter(
+            listener=user,
+            status='completed'
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+        
+        pending_withdrawals = ListenerPayout.objects.filter(
+            listener=user,
+            status='pending'
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+        
+        processing_payouts = ListenerPayout.objects.filter(
+            listener=user,
+            status='processing',
+            is_extension=False
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+        
+        calculated_balance = earned_payouts + extension_earnings - completed_withdrawals
+        
         return Response({
             'available_balance': str(balance.available_balance),
             'total_earned': str(balance.total_earned),
-            'last_updated': balance.updated_at
+            'last_updated': balance.updated_at,
+            
+            # Debugging information
+            'debug_info': {
+                'earned_payouts': str(earned_payouts),
+                'extension_earnings': str(extension_earnings), 
+                'completed_withdrawals': str(completed_withdrawals),
+                'pending_withdrawals': str(pending_withdrawals),
+                'processing_payouts': str(processing_payouts),
+                'calculated_balance': str(calculated_balance),
+                'balance_difference': str(balance.available_balance - calculated_balance),
+                'balance_created_now': created
+            }
         })

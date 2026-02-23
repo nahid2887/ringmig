@@ -40,51 +40,56 @@ def save_listener_profile(sender, instance, **kwargs):
             )
 
 
-@receiver(post_save, sender='chat.CallSession')
-def add_listener_earnings_on_call_end(sender, instance, created, **kwargs):
+# Removed add_listener_earnings_on_call_end - now handled by sync_payout_earnings_to_balance
+# when ListenerPayout status changes to 'earned'
+
+
+@receiver(post_save, sender='chat.ListenerPayout')
+def sync_payout_earnings_to_balance(sender, instance, created, update_fields, **kwargs):
     """
-    Automatically add money to listener's balance when call ends.
+    Sync ListenerPayout 'earned' status to ListenerBalance.
     
-    Triggers when:
-    - CallSession status changes to 'ended' or 'timeout'
-    - CallPackage is confirmed/used
+    When a ListenerPayout transitions to 'earned' status, add the amount to the listener's balance.
+    This is the primary synchronization between payout tracking and balance system.
     """
     from listener.models import ListenerBalance
     
-    # Only process when call ends
-    if instance.status not in ['ended', 'timeout']:
+    # Skip if this is creation (only handle status updates)
+    if created:
         return
-    
-    # Get the initial package
-    if not instance.initial_package:
-        logger.warning(f"⚠️ CallSession {instance.id} has no initial_package")
+        
+    # Only process if status field was updated
+    if update_fields and 'status' not in update_fields:
         return
-    
-    package = instance.initial_package
-    
-    # Only process confirmed/used packages
-    if package.status not in ['confirmed', 'used', 'in_progress', 'completed']:
-        logger.info(f"📦 Package {package.id} status is '{package.status}', skipping earnings")
+        
+    # Only when status becomes 'earned'
+    if instance.status != 'earned':
         return
-    
-    # Check if already processed (avoid double-crediting)
-    if hasattr(package, '_base_earnings_processed') and package._base_earnings_processed:
+        
+    # Avoid double-processing (check if this earning was already added)
+    if hasattr(instance, '_earnings_synced') and instance._earnings_synced:
         return
-    
-    # Get or create listener balance
-    balance, created = ListenerBalance.objects.get_or_create(
-        listener=instance.listener,
-        defaults={'available_balance': Decimal('0.00'), 'total_earned': Decimal('0.00')}
-    )
-    
-    # Add to balance
-    listener_amount = package.listener_amount
-    balance.add_earnings(listener_amount)
-    
-    # Mark as processed
-    package._base_earnings_processed = True
-    
-    logger.info(f"💰 Added ${listener_amount} to {instance.listener.email} for call session {instance.id}")
+        
+    try:
+        # Get or create balance account
+        balance, created = ListenerBalance.objects.get_or_create(
+            listener=instance.listener,
+            defaults={'available_balance': Decimal('0.00'), 'total_earned': Decimal('0.00')}
+        )
+        
+        # Add earnings to balance (only if not an extension for base packages)
+        # Extensions are handled separately and added immediately when confirmed
+        if not instance.is_extension:
+            balance.add_earnings(instance.amount)
+            logger.info(f"💰 Synced ${instance.amount} to {instance.listener.email}'s balance (Payout #{instance.id} earned)")
+        else:
+            logger.info(f"⏱️ Skipping extension payout #{instance.id} - handled separately")
+            
+        # Mark as processed to avoid double-syncing
+        instance._earnings_synced = True
+        
+    except Exception as e:
+        logger.error(f"Error syncing payout #{instance.id} to balance: {str(e)}")
 
 
 @receiver(post_save, sender='chat.CallPackage')
@@ -95,6 +100,9 @@ def add_listener_earnings_on_extension(sender, instance, created, **kwargs):
     Triggers when:
     - CallPackage.is_extension = True
     - Status = 'confirmed' or 'used'
+    
+    Extensions are credited immediately since they don't go through the normal
+    'processing' -> 'earned' flow like base packages.
     """
     from listener.models import ListenerBalance
     
