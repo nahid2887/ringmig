@@ -110,6 +110,7 @@ class TalkerProfileViewSet(viewsets.ModelViewSet):
     def all_listeners(self, request):
         """Get all listeners for talker to browse.
         
+        Filters listeners who speak the same language as the talker.
         Supports search by first_name or last_name and filtering by gender.
         Excludes listeners who have blocked this talker.
         
@@ -125,6 +126,9 @@ class TalkerProfileViewSet(viewsets.ModelViewSet):
         blocked_by = ListenerBlockedTalker.objects.filter(
             talker=request.user
         ).values_list('listener_id', flat=True)
+        
+        # Get talker's language
+        talker_language = request.user.language
         
         # Get all listeners except those who have blocked this talker
         listeners = ListenerProfile.objects.exclude(
@@ -144,9 +148,17 @@ class TalkerProfileViewSet(viewsets.ModelViewSet):
         if gender:
             listeners = listeners.filter(gender=gender)
         
+        # Filter by language - listener must speak the talker's language
+        # This is done in Python to support SQLite (doesn't support JSONField contains lookup)
+        # Only use ListenerProfile.languages - no fallback to User.language
+        listeners = [
+            listener for listener in listeners 
+            if listener.languages and talker_language in listener.languages
+        ]
+        
         serializer = ListenerListSerializer(listeners, many=True, context={'request': request})
         return Response({
-            'count': listeners.count(),
+            'count': len(listeners),
             'results': serializer.data,
             'search_query': search_query if search_query else None,
             'gender_filter': gender if gender else None
@@ -165,6 +177,7 @@ class TalkerProfileViewSet(viewsets.ModelViewSet):
     def available_listeners(self, request):
         """Get all available listeners only.
         
+        Filters listeners who speak the same language as the talker.
         Supports search by first_name or last_name.
         Excludes listeners who have blocked this talker.
         
@@ -179,6 +192,9 @@ class TalkerProfileViewSet(viewsets.ModelViewSet):
         blocked_by = ListenerBlockedTalker.objects.filter(
             talker=request.user
         ).values_list('listener_id', flat=True)
+        
+        # Get talker's language
+        talker_language = request.user.language
         
         # Get available listeners except those who have blocked this talker
         listeners = ListenerProfile.objects.filter(
@@ -195,9 +211,17 @@ class TalkerProfileViewSet(viewsets.ModelViewSet):
                 Q(last_name__icontains=search_query)
             )
         
+        # Filter by language - listener must speak the talker's language
+        # This is done in Python to support SQLite (doesn't support JSONField contains lookup)
+        # Only use ListenerProfile.languages - no fallback to User.language
+        listeners = [
+            listener for listener in listeners 
+            if listener.languages and talker_language in listener.languages
+        ]
+        
         serializer = ListenerListSerializer(listeners, many=True, context={'request': request})
         return Response({
-            'count': listeners.count(),
+            'count': len(listeners),
             'results': serializer.data,
             'search_query': search_query if search_query else None
         })
@@ -211,10 +235,12 @@ class TalkerProfileViewSet(viewsets.ModelViewSet):
     def all_listeners_detail(self, request):
         """Get detailed information about a specific listener by user ID.
         
+        Verifies the listener speaks the same language as the talker.
+        
         URL: /api/talker/profiles/all_listeners_detail/?user_id=4
         Example: /api/talker/profiles/all_listeners_detail/?user_id=4
         
-        Returns 403 if the listener has blocked this talker.
+        Returns 403 if the listener has blocked this talker or doesn't speak talker's language.
         """
         user_id = request.query_params.get('user_id')
         
@@ -238,6 +264,15 @@ class TalkerProfileViewSet(viewsets.ModelViewSet):
         
         try:
             listener = ListenerProfile.objects.get(user_id=user_id)
+            
+            # Check if listener speaks the talker's language
+            # Only use ListenerProfile.languages - no fallback to User.language
+            talker_language = request.user.language
+            if not listener.languages or talker_language not in listener.languages:
+                return Response(
+                    {'error': 'This listener does not speak your language'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
         except ListenerProfile.DoesNotExist:
             return Response(
                 {'error': f'Listener with user ID {user_id} not found'},
@@ -256,10 +291,12 @@ class TalkerProfileViewSet(viewsets.ModelViewSet):
     def available_listeners_detail(self, request):
         """Get detailed information about an available listener by user ID.
         
+        Verifies the listener speaks the same language as the talker and is available.
+        
         URL: /api/talker/profiles/available_listeners_detail/?user_id=4
         Example: /api/talker/profiles/available_listeners_detail/?user_id=4
         
-        Returns 403 if the listener has blocked this talker or is not available.
+        Returns 403 if the listener has blocked this talker, doesn't speak talker's language, or is unavailable.
         """
         user_id = request.query_params.get('user_id')
         
@@ -283,6 +320,15 @@ class TalkerProfileViewSet(viewsets.ModelViewSet):
         
         try:
             listener = ListenerProfile.objects.get(user_id=user_id, is_available=True)
+            
+            # Check if listener speaks the talker's language
+            # Only use ListenerProfile.languages - no fallback to User.language
+            talker_language = request.user.language
+            if not listener.languages or talker_language not in listener.languages:
+                return Response(
+                    {'error': 'This listener does not speak your language'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
         except ListenerProfile.DoesNotExist:
             return Response(
                 {'error': f'Available listener with user ID {user_id} not found'},

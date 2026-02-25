@@ -92,7 +92,8 @@ class OTPRequestView(APIView):
                 expires_at=timezone.now() + timedelta(minutes=10),
                 full_name=serializer.validated_data['full_name'],
                 password=serializer.validated_data['password'],
-                user_type=serializer.validated_data.get('user_type', 'talker')
+                user_type=serializer.validated_data.get('user_type', 'talker'),
+                language=serializer.validated_data.get('language', 'en')
             )
             
             # Send OTP via email
@@ -143,6 +144,7 @@ class OTPVerificationView(APIView):
                     password=otp_obj.password,
                     full_name=otp_obj.full_name,
                     user_type=otp_obj.user_type or 'talker',
+                    language=otp_obj.language or 'en',
                     is_verified=True,
                     is_active=True
                 )
@@ -203,7 +205,8 @@ class UserRegistrationView(APIView):
                 expires_at=timezone.now() + timedelta(minutes=10),
                 full_name=serializer.validated_data['full_name'],
                 password=serializer.validated_data['password'],
-                user_type=serializer.validated_data.get('user_type', 'talker')
+                user_type=serializer.validated_data.get('user_type', 'talker'),
+                language=serializer.validated_data.get('language', 'en')
             )
             
             # Send OTP via email

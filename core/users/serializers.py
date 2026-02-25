@@ -6,6 +6,63 @@ from .models import OTP
 
 User = get_user_model()
 
+# Language choices - 50+ languages for user selection
+LANGUAGE_CHOICES = [
+    ('en', 'English'),
+    ('es', 'Español (Spanish)'),
+    ('fr', 'Français (French)'),
+    ('de', 'Deutsch (German)'),
+    ('it', 'Italiano (Italian)'),
+    ('pt', 'Português (Portuguese)'),
+    ('ru', 'Русский (Russian)'),
+    ('ja', '日本語 (Japanese)'),
+    ('zh', '中文 (Chinese)'),
+    ('ko', '한국어 (Korean)'),
+    ('ar', 'العربية (Arabic)'),
+    ('hi', 'हिन्दी (Hindi)'),
+    ('bn', 'বাংলা (Bengali)'),
+    ('pa', 'ਪੰਜਾਬੀ (Punjabi)'),
+    ('te', 'తెలుగు (Telugu)'),
+    ('mr', 'मराठी (Marathi)'),
+    ('ta', 'தமிழ் (Tamil)'),
+    ('gu', 'ગુજરાતી (Gujarati)'),
+    ('kn', 'ಕನ್ನಡ (Kannada)'),
+    ('ml', 'മലയാളം (Malayalam)'),
+    ('th', 'ไทย (Thai)'),
+    ('vi', 'Tiếng Việt (Vietnamese)'),
+    ('id', 'Bahasa Indonesia (Indonesian)'),
+    ('ms', 'Bahasa Melayu (Malay)'),
+    ('tl', 'Tagalog (Filipino)'),
+    ('tr', 'Türkçe (Turkish)'),
+    ('pl', 'Polski (Polish)'),
+    ('uk', 'Українська (Ukrainian)'),
+    ('cs', 'Čeština (Czech)'),
+    ('ro', 'Română (Romanian)'),
+    ('hu', 'Magyar (Hungarian)'),
+    ('el', 'Ελληνικά (Greek)'),
+    ('sv', 'Svenska (Swedish)'),
+    ('no', 'Norsk (Norwegian)'),
+    ('da', 'Dansk (Danish)'),
+    ('fi', 'Suomi (Finnish)'),
+    ('nl', 'Nederlands (Dutch)'),
+    ('be', 'Белорусский (Belarusian)'),
+    ('bg', 'Български (Bulgarian)'),
+    ('hr', 'Hrvatski (Croatian)'),
+    ('sk', 'Slovenčina (Slovak)'),
+    ('sl', 'Slovenščina (Slovenian)'),
+    ('et', 'Eesti (Estonian)'),
+    ('lv', 'Latviešu (Latvian)'),
+    ('lt', 'Lietuvių (Lithuanian)'),
+    ('he', 'עברית (Hebrew)'),
+    ('fa', 'فارسی (Persian)'),
+    ('ur', 'اردو (Urdu)'),
+    ('sw', 'Kiswahili (Swahili)'),
+    ('af', 'Afrikaans'),
+    ('sq', 'Shqip (Albanian)'),
+    ('hy', 'Հայերեն (Armenian)'),
+    ('ka', 'ქართული (Georgian)'),
+]
+
 
 class OTPRequestSerializer(serializers.Serializer):
     """Serializer for requesting OTP during registration."""
@@ -14,7 +71,7 @@ class OTPRequestSerializer(serializers.Serializer):
     password = serializers.CharField(write_only=True, validators=[validate_password])
     password_confirm = serializers.CharField(write_only=True)
     user_type = serializers.ChoiceField(choices=['talker', 'listener'], required=False, default='talker')
-    language = serializers.ChoiceField(choices=['en', 'sv'], required=False, default='en')
+    language = serializers.ChoiceField(choices=LANGUAGE_CHOICES, required=False, default='en')
 
     def validate(self, attrs):
         if attrs['password'] != attrs['password_confirm']:
