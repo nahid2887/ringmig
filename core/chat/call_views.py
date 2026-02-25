@@ -2584,8 +2584,9 @@ class ListenerPayoutViewSet(viewsets.ReadOnlyModelViewSet):
                 )
                 return Response({
                     'message': 'Complete Stripe onboarding.',
-                    'onboarding_url': account_link.url
-                }, status=status.HTTP_400_BAD_REQUEST)
+                    'onboarding_url': account_link.url,
+                    'status': 'onboarding_required'
+                }, status=status.HTTP_200_OK)
             
             if amount > 0:
                 try:
@@ -2652,7 +2653,7 @@ class ListenerPayoutViewSet(viewsets.ReadOnlyModelViewSet):
                         'transfer_id': transfer.id,
                         'amount': str(amount),
                         'new_balance': str(available - amount),
-                    }, status=status.HTTP_200_OK)
+                    }, status=status.HTTP_201_CREATED)
                 
                 except (stripe.error.StripeError, Exception) as e:
                     logger.error(f"Payout error: {str(e)}")
@@ -2818,12 +2819,11 @@ class ListenerPayoutViewSet(viewsets.ReadOnlyModelViewSet):
                     logger.warning(f"Stripe account {stripe_account_id} requires onboarding")
                     return Response(
                         {
-                            'error': 'Your Stripe account requires onboarding before withdrawals',
                             'message': 'Complete Stripe onboarding',
                             'onboarding_url': account_link.url,
                             'status': 'onboarding_required'
                         },
-                        status=status.HTTP_400_BAD_REQUEST
+                        status=status.HTTP_201_OK
                     )
             except stripe.error.StripeError as e:
                 logger.error(f"Failed to retrieve Stripe account: {str(e)}")
@@ -2900,7 +2900,7 @@ class ListenerPayoutViewSet(viewsets.ReadOnlyModelViewSet):
                 'transfer_id': transfer.id,
                 'new_balance': str(available_balance - amount),
                 'status': 'completed'
-            }, status=status.HTTP_200_OK)
+            }, status=status.HTTP_201_CREATED)
         
         except stripe.error.StripeError as e:
             logger.error(f"Stripe error during payout: {str(e)}")
