@@ -609,9 +609,32 @@ class CallPackageViewSet(viewsets.ModelViewSet):
                 # Don't mark as in_progress yet - wait for WebSocket connection
                 # call_package.start_call() will be called by CallConsumer.start_call()
                 
+                # Generate ZIM tokens for both participants
+                from .zim_utils import generate_zim_tokens_for_call
+                zim_tokens = generate_zim_tokens_for_call(
+                    talker_user=call_package.talker,
+                    listener_user=call_package.listener,
+                    expire_time_in_seconds=7200  # 2 hours
+                )
+                
                 return Response({
                     'message': 'Call session created. Connect to WebSocket to start call.',
                     'session': CallSessionSerializer(session).data,
+                    'zim': {
+                        'app_id': zim_tokens['app_id'],
+                        'talker': {
+                            'user_id': zim_tokens['talker']['user_id'],
+                            'username': zim_tokens['talker']['username'],
+                            'token': zim_tokens['talker']['token']
+                        },
+                        'listener': {
+                            'user_id': zim_tokens['listener']['user_id'],
+                            'username': zim_tokens['listener']['username'],
+                            'token': zim_tokens['listener']['token']
+                        },
+                        'expires_at': zim_tokens['expires_at'],
+                        'expire_time_seconds': zim_tokens['expire_time_seconds']
+                    },
                     'websocket_url': f'/ws/call/{session.id}/',
                     'websocket_full_url': f'ws://10.10.13.27:8005/ws/call/{session.id}/?token=YOUR_JWT_TOKEN',
                     'call_package_id': call_package.id,
@@ -929,6 +952,14 @@ class CallSessionViewSet(viewsets.ReadOnlyModelViewSet):
                 # Send incoming call notification to listener via Channel Layer
                 self.send_incoming_call_notification(session, call_package)
                 
+                # Generate ZIM tokens for both participants
+                from .zim_utils import generate_zim_tokens_for_call
+                zim_tokens = generate_zim_tokens_for_call(
+                    talker_user=call_package.talker,
+                    listener_user=call_package.listener,
+                    expire_time_in_seconds=7200  # 2 hours
+                )
+                
                 # Agora system commented out
                 tokens = {}
                 user_token = None
@@ -954,6 +985,21 @@ class CallSessionViewSet(viewsets.ReadOnlyModelViewSet):
                         'call_type': session.call_type,
                         'created_at': session.created_at.isoformat(),
                         'updated_at': session.updated_at.isoformat()
+                    },
+                    'zim': {
+                        'app_id': zim_tokens['app_id'],
+                        'talker': {
+                            'user_id': zim_tokens['talker']['user_id'],
+                            'username': zim_tokens['talker']['username'],
+                            'token': zim_tokens['talker']['token']
+                        },
+                        'listener': {
+                            'user_id': zim_tokens['listener']['user_id'],
+                            'username': zim_tokens['listener']['username'],
+                            'token': zim_tokens['listener']['token']
+                        },
+                        'expires_at': zim_tokens['expires_at'],
+                        'expire_time_seconds': zim_tokens['expire_time_seconds']
                     },
                     # 'agora': {
                     #     'app_id': tokens['app_id'],
@@ -1293,6 +1339,14 @@ class CallSessionViewSet(viewsets.ReadOnlyModelViewSet):
             # }
             agora_data = {}
             
+            # Generate ZIM tokens for both participants
+            from .zim_utils import generate_zim_tokens_for_call
+            zim_tokens = generate_zim_tokens_for_call(
+                talker_user=call_session.talker,
+                listener_user=call_session.listener,
+                expire_time_in_seconds=7200  # 2 hours
+            )
+            
             # Notify talker via WebSocket that listener has accepted
             self.send_call_accepted_notification(call_session_id, call_session)
             
@@ -1302,6 +1356,21 @@ class CallSessionViewSet(viewsets.ReadOnlyModelViewSet):
                 'message': 'Call accepted successfully. Timer started.',
                 'accepted': True,
                 'session': CallSessionSerializer(call_session).data,
+                'zim': {
+                    'app_id': zim_tokens['app_id'],
+                    'talker': {
+                        'user_id': zim_tokens['talker']['user_id'],
+                        'username': zim_tokens['talker']['username'],
+                        'token': zim_tokens['talker']['token']
+                    },
+                    'listener': {
+                        'user_id': zim_tokens['listener']['user_id'],
+                        'username': zim_tokens['listener']['username'],
+                        'token': zim_tokens['listener']['token']
+                    },
+                    'expires_at': zim_tokens['expires_at'],
+                    'expire_time_seconds': zim_tokens['expire_time_seconds']
+                },
                 'agora': agora_data,
                 'talker_notified': True,
                 'timer_started': True,
