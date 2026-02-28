@@ -12,6 +12,7 @@ from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 import logging
 import stripe
+import time
 
 from .call_models import CallPackage, CallSession, UniversalCallPackage, CallRejection, ListenerPayout
 from .call_serializers import (
@@ -2981,5 +2982,72 @@ class ListenerPayoutViewSet(viewsets.ReadOnlyModelViewSet):
             logger.error(f"Error processing payout: {str(e)}", exc_info=True)
             return Response(
                 {'error': f'Failed to process payout: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @swagger_auto_schema(
+        method='post',
+        operation_description="Debug endpoint: Test ZIM tokens with different version numbers",
+        responses={
+            200: openapi.Response('ZIM tokens with multiple versions for debugging'),
+        }
+    )
+    @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated])
+    def debug_zim_versions(self, request):
+        """Debug endpoint to test ZIM tokens with different version numbers"""
+        from .zim_utils import ZIMTokenGenerator
+        
+        try:
+            # Test user data
+            user_id = str(request.user.id)
+            username = request.user.username
+            
+            # Create token generator
+            generator = ZIMTokenGenerator(1865295594, "efef8b9e5b13336b686eb207fd05e25b")
+            
+            # Test versions 1-25
+            versions_to_test = [1, 2, 3, 4, 5, 10, 20, 21, 22, 23, 24, 25]
+            tokens = {}
+            
+            for version in versions_to_test:
+                try:
+                    current_time = int(time.time())
+                    expire_time = current_time + 7200  # 2 hours
+                    
+                    payload = {
+                        "ver": version,
+                        "uid": user_id,
+                        "name": username,
+                        "exp": expire_time,
+                        "iat": current_time
+                    }
+                    
+                    import jwt
+                    token = jwt.encode(
+                        payload,
+                        "efef8b9e5b13336b686eb207fd05e25b",
+                        algorithm='HS256'
+                    )
+                    
+                    tokens[f'version_{version}'] = {
+                        'token': token,
+                        'version': version,
+                        'payload': payload
+                    }
+                except Exception as e:
+                    tokens[f'version_{version}'] = {'error': str(e)}
+            
+            return Response({
+                'message': 'ZIM token version debug test',
+                'app_id': 1865295594,
+                'user_id': user_id,
+                'username': username,
+                'tokens': tokens,
+                'instructions': 'Try each token version in your ZIM client to find which works'
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Debug test failed: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
