@@ -9,12 +9,14 @@ from .views import (
     ListenerConnectAccountView,
     ListenerConnectRefreshView,
     ListenerConnectReturnView,
+    TipViewSet,
 )
 
 router = DefaultRouter()
 router.register(r'packages', BookingPackageViewSet, basename='booking-package')
 router.register(r'bookings', BookingViewSet, basename='booking')
 router.register(r'payments', PaymentViewSet, basename='payment')
+router.register(r'tips', TipViewSet, basename='tip')
 
 urlpatterns = [
     path('', include(router.urls)),

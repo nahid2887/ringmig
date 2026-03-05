@@ -5,7 +5,8 @@ from .models import (
     Payment, 
     ListenerPayout,
     StripeCustomer,
-    StripeListenerAccount
+    StripeListenerAccount,
+    Tip
 )
 
 
@@ -56,3 +57,17 @@ class StripeListenerAccountAdmin(admin.ModelAdmin):
     list_filter = ['is_verified', 'is_enabled']
     search_fields = ['listener__email', 'stripe_account_id']
     readonly_fields = ['created_at', 'updated_at']
+
+
+@admin.register(Tip)
+class TipAdmin(admin.ModelAdmin):
+    list_display = ['id', 'talker', 'listener', 'amount', 'admin_fee', 'listener_amount', 'status', 'created_at']
+    list_filter = ['status', 'created_at']
+    search_fields = ['talker__email', 'listener__email', 'stripe_payment_intent_id']
+    readonly_fields = ['admin_fee', 'listener_amount', 'created_at', 'updated_at', 'paid_at', 'refunded_at']
+    raw_id_fields = ['talker', 'listener']
+    
+    def get_readonly_fields(self, request, obj=None):
+        if obj:  # editing an existing object
+            return self.readonly_fields + ('talker', 'listener', 'amount')
+        return self.readonly_fields

@@ -5,7 +5,8 @@ from .models import (
     Payment,
     ListenerPayout,
     StripeCustomer,
-    StripeListenerAccount
+    StripeListenerAccount,
+    Tip
 )
 from users.serializers import UserSerializer
 from listener.serializers import ListenerProfileSerializer
@@ -253,3 +254,83 @@ class StripeListenerAccountSerializer(serializers.ModelSerializer):
             'created_at',
             'updated_at'
         ]
+
+
+class TipSerializer(serializers.ModelSerializer):
+    """Serializer for tips."""
+    
+    talker_details = UserSerializer(source='talker', read_only=True)
+    listener_details = UserSerializer(source='listener', read_only=True)
+    admin_fee = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    listener_amount = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    
+    class Meta:
+        model = Tip
+        fields = [
+            'id',
+            'talker',
+            'listener',
+            'amount',
+            'currency',
+            'status',
+            'admin_fee',
+            'listener_amount',
+            'message',
+            'failure_reason',
+            'created_at',
+            'updated_at',
+            'paid_at',
+            'talker_details',
+            'listener_details'
+        ]
+        read_only_fields = [
+            'id',
+            'admin_fee',
+            'listener_amount',
+            'status',
+            'failure_reason',
+            'created_at',
+            'updated_at',
+            'paid_at'
+        ]
+
+
+class CreateTipSerializer(serializers.Serializer):
+    """Serializer for creating a new tip payment."""
+    
+    listener_id = serializers.IntegerField(help_text="ID of the listener to tip")
+    amount = serializers.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        min_value=0.01,
+        help_text="Tip amount in USD (minimum $0.01)"
+    )
+    message = serializers.CharField(
+        max_length=500,
+        required=False,
+        allow_blank=True,
+        help_text="Optional message with the tip"
+    )
+    
+    def validate_listener_id(self, value):
+        """Validate that the listener exists and is active."""
+        from django.contrib.auth import get_user_model
+        
+        User = get_user_model()
+        try:
+            listener = User.objects.get(id=value, user_type='listener', is_active=True)
+        except User.DoesNotExist:
+            raise serializers.ValidationError("Listener not found or not active")
+        
+        return value
+
+
+class TipPaymentIntentSerializer(serializers.Serializer):
+    """Serializer for tip payment intent response."""
+    
+    tip_id = serializers.IntegerField()
+    stripe_client_secret = serializers.CharField()
+    stripe_payment_intent_id = serializers.CharField()
+    amount = serializers.DecimalField(max_digits=10, decimal_places=2)
+    admin_fee = serializers.DecimalField(max_digits=10, decimal_places=2)
+    listener_amount = serializers.DecimalField(max_digits=10, decimal_places=2)

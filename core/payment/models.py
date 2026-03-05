@@ -1,4 +1,4 @@
-from django.db import models
+from django.db import models, transaction
 from django.contrib.auth import get_user_model
 from django.utils.translation import gettext_lazy as _
 from django.core.validators import MinValueValidator, MaxValueValidator
@@ -390,3 +390,121 @@ class StripeListenerAccount(models.Model):
     
     def __str__(self):
         return f"{self.listener.email} - {self.stripe_account_id}"
+
+
+class Tip(models.Model):
+    """Represents tips sent from talkers to listeners."""
+    
+    STATUS_CHOICES = [
+        ('pending', _('Pending Payment')),
+        ('processing', _('Processing')),
+        ('succeeded', _('Succeeded')),
+        ('failed', _('Failed')),
+        ('refunded', _('Refunded')),
+    ]
+    
+    talker = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='sent_tips',
+        limit_choices_to={'user_type': 'talker'}
+    )
+    listener = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='received_tips',
+        limit_choices_to={'user_type': 'listener'}
+    )
+    
+    # Payment details
+    amount = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal('0.01'))],
+        help_text=_('Tip amount in USD')
+    )
+    currency = models.CharField(max_length=3, default='USD')
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='pending'
+    )
+    
+    # Commission split (10% admin, 90% listener)
+    admin_fee = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        help_text=_('Admin commission (10%)')
+    )
+    listener_amount = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        help_text=_('Amount credited to listener (90%)')
+    )
+    
+    # Stripe information
+    stripe_payment_intent_id = models.CharField(max_length=255, unique=True, null=True, blank=True)
+    stripe_charge_id = models.CharField(max_length=255, blank=True)
+    stripe_customer_id = models.CharField(max_length=255, blank=True)
+    
+    # Additional info
+    message = models.TextField(blank=True, help_text=_('Optional message with the tip'))
+    failure_reason = models.TextField(blank=True)
+    refund_reason = models.TextField(blank=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    paid_at = models.DateTimeField(null=True, blank=True)
+    refunded_at = models.DateTimeField(null=True, blank=True)
+    
+    class Meta:
+        verbose_name = 'Tip'
+        verbose_name_plural = 'Tips'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['talker', '-created_at']),
+            models.Index(fields=['listener', '-created_at']),
+            models.Index(fields=['status', '-created_at']),
+            models.Index(fields=['stripe_payment_intent_id']),
+        ]
+    
+    def __str__(self):
+        return f"Tip #{self.id}: {self.talker.email} -> {self.listener.email} (${self.amount})"
+    
+    def save(self, *args, **kwargs):
+        """Calculate commission split on save."""
+        if not self.admin_fee or not self.listener_amount:
+            admin_percentage = Decimal('10.00')
+            amount_decimal = Decimal(str(self.amount))
+            self.admin_fee = (amount_decimal * admin_percentage / 100).quantize(Decimal('0.01'))
+            self.listener_amount = (amount_decimal - self.admin_fee).quantize(Decimal('0.01'))
+        super().save(*args, **kwargs)
+    
+    def confirm_payment(self):
+        """Mark tip as succeeded and update listener balance."""
+        from django.utils import timezone
+        from listener.models import ListenerBalance
+        
+        if self.status != 'pending':
+            return False
+            
+        with transaction.atomic():
+            # Update tip status
+            self.status = 'succeeded'
+            self.paid_at = timezone.now()
+            self.save(update_fields=['status', 'paid_at', 'updated_at'])
+            
+            # Update listener balance
+            balance, created = ListenerBalance.objects.get_or_create(
+                listener=self.listener,
+                defaults={'available_balance': Decimal('0.00'), 'total_earned': Decimal('0.00')}
+            )
+            balance.add_earnings(self.listener_amount)
+            
+            return True
+    
+    def mark_failed(self, reason=''):
+        """Mark tip payment as failed."""
+        self.status = 'failed'
+        self.failure_reason = reason
+        self.save(update_fields=['status', 'failure_reason', 'updated_at'])

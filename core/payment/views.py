@@ -17,7 +17,8 @@ from .models import (
     Payment,
     ListenerPayout,
     StripeCustomer,
-    StripeListenerAccount
+    StripeListenerAccount,
+    Tip
 )
 from .serializers import (
     BookingPackageSerializer,
@@ -26,6 +27,9 @@ from .serializers import (
     PaymentSerializer,
     PaymentIntentSerializer,
     ListenerPayoutSerializer,
+    TipSerializer,
+    CreateTipSerializer,
+    TipPaymentIntentSerializer,
 )
 
 # Configure Stripe
@@ -1010,6 +1014,32 @@ class StripeWebhookView(APIView):
                 logger.warning(f"Payout collection missing listener_id or amount")
                 return Response({'status': 'processed'})
             
+            # Handle tip payment via checkout session
+            if session_type == 'tip':
+                tip_id = session['metadata'].get('tip_id')
+                
+                if tip_id:
+                    try:
+                        tip = Tip.objects.get(id=tip_id)
+                        
+                        if tip.status == 'pending':
+                            if tip.confirm_payment():
+                                logger.info(f"✓ Tip payment via checkout completed: ${tip.amount} from {tip.talker.email} to {tip.listener.email}")
+                                logger.info(f"💰 Listener balance updated: +${tip.listener_amount}")
+                            else:
+                                logger.warning(f"⚠ Failed to confirm tip payment {tip_id} via checkout")
+                        else:
+                            logger.info(f"ℹ Tip {tip_id} already processed (status: {tip.status})")
+                        
+                        return Response({'status': 'processed'})
+                        
+                    except Tip.DoesNotExist:
+                        logger.error(f"Tip {tip_id} not found for checkout session {session['id']}")
+                        return Response({'status': 'processed'})
+                
+                logger.warning(f"Tip checkout session missing tip_id")
+                return Response({'status': 'processed'})
+            
             # Handle call extension (add minutes to active call)
             if is_extension and call_package_id and call_session_id:
                 from chat.call_models import CallPackage, CallSession, ListenerPayout
@@ -1168,6 +1198,28 @@ class StripeWebhookView(APIView):
         try:
             booking_id = payment_intent['metadata'].get('booking_id')
             call_package_id = payment_intent['metadata'].get('call_package_id')
+            tip_id = payment_intent['metadata'].get('tip_id')
+            payment_type = payment_intent['metadata'].get('type')
+            
+            # Handle tip payment
+            if tip_id or payment_type == 'tip':
+                try:
+                    tip = Tip.objects.get(
+                        id=tip_id,
+                        stripe_payment_intent_id=payment_intent['id']
+                    )
+                    
+                    if tip.confirm_payment():
+                        logger.info(f"✓ Tip payment succeeded: ${tip.amount} from {tip.talker.email} to {tip.listener.email}")
+                        logger.info(f"💰 Listener balance updated: +${tip.listener_amount}")
+                    else:
+                        logger.warning(f"⚠ Failed to confirm tip payment {tip_id}")
+                    
+                    return Response({'status': 'processed'})
+                    
+                except Tip.DoesNotExist:
+                    logger.error(f"Tip {tip_id} not found for payment intent {payment_intent['id']}")
+                    return Response({'status': 'processed'})
             
             # Handle call package payment
             if call_package_id:
@@ -1224,6 +1276,26 @@ class StripeWebhookView(APIView):
         try:
             booking_id = payment_intent['metadata'].get('booking_id')
             call_package_id = payment_intent['metadata'].get('call_package_id')
+            tip_id = payment_intent['metadata'].get('tip_id')
+            payment_type = payment_intent['metadata'].get('type')
+            
+            # Handle tip payment failure
+            if tip_id or payment_type == 'tip':
+                try:
+                    tip = Tip.objects.get(
+                        id=tip_id,
+                        stripe_payment_intent_id=payment_intent['id']
+                    )
+                    
+                    failure_reason = payment_intent.get('last_payment_error', {}).get('message', 'Payment failed')
+                    tip.mark_failed(failure_reason)
+                    
+                    logger.error(f"✗ Tip payment failed: ${tip.amount} from {tip.talker.email} to {tip.listener.email}")
+                    return Response({'status': 'processed'})
+                    
+                except Tip.DoesNotExist:
+                    logger.error(f"Tip {tip_id} not found for failed payment intent {payment_intent['id']}")
+                    return Response({'status': 'processed'})
             
             # Handle call package payment failure
             if call_package_id:
@@ -1266,3 +1338,188 @@ class StripeWebhookView(APIView):
         """Handle payment dispute/chargeback."""
         logger.warning(f"Payment dispute created: {dispute['id']}")
         return Response({'status': 'processed'})
+
+
+class TipViewSet(viewsets.ModelViewSet):
+    """ViewSet for managing tips."""
+    
+    serializer_class = TipSerializer
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        """Return tips based on user type."""
+        user = self.request.user
+        if user.user_type == 'talker':
+            return Tip.objects.filter(talker=user).select_related('listener')
+        elif user.user_type == 'listener':
+            return Tip.objects.filter(listener=user).select_related('talker')
+        return Tip.objects.none()
+    
+    @action(detail=False, methods=['post'], url_path='create-payment-intent')
+    def create_payment_intent(self, request):
+        """
+        Create a Stripe payment intent and checkout session for a tip.
+        
+        Request: {
+            "listener_id": 5,
+            "amount": "25.00",
+            "message": "Great conversation!"
+        }
+        
+        Returns Stripe payment intent client secret and checkout session URL.
+        """
+        if request.user.user_type != 'talker':
+            return Response(
+                {'error': 'Only talkers can send tips'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        serializer = CreateTipSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        listener_id = serializer.validated_data['listener_id']
+        amount = serializer.validated_data['amount']
+        message = serializer.validated_data.get('message', '')
+        
+        try:
+            from django.contrib.auth import get_user_model
+            User = get_user_model()
+            listener = User.objects.get(id=listener_id, user_type='listener')
+            
+            # Create tip record
+            tip = Tip.objects.create(
+                talker=request.user,
+                listener=listener,
+                amount=amount,
+                message=message,
+                status='pending'
+            )
+            
+            # Get or create Stripe customer
+            stripe_customer, created = StripeCustomer.objects.get_or_create(
+                user=request.user,
+                defaults={'stripe_customer_id': ''}
+            )
+            
+            if not stripe_customer.stripe_customer_id:
+                customer = stripe.Customer.create(
+                    email=request.user.email,
+                    name=request.user.get_full_name() or request.user.email,
+                    metadata={'user_id': request.user.id}
+                )
+                stripe_customer.stripe_customer_id = customer.id
+                stripe_customer.save()
+            
+            # Create payment intent
+            payment_intent = stripe.PaymentIntent.create(
+                amount=int(amount * 100),  # Convert to cents
+                currency='usd',
+                customer=stripe_customer.stripe_customer_id,
+                metadata={
+                    'tip_id': tip.id,
+                    'talker_id': request.user.id,
+                    'listener_id': listener.id,
+                    'type': 'tip'
+                },
+                automatic_payment_methods={'enabled': True}
+            )
+            
+            # Create checkout session for payment link
+            checkout_session = stripe.checkout.Session.create(
+                payment_method_types=['card'],
+                customer=stripe_customer.stripe_customer_id,
+                line_items=[{
+                    'price_data': {
+                        'currency': 'usd',
+                        'product_data': {
+                            'name': f'Tip to {listener.get_full_name() or listener.email}',
+                            'description': f'Tip: {message[:100]}' if message else 'Tip payment',
+                        },
+                        'unit_amount': int(amount * 100),
+                    },
+                    'quantity': 1,
+                }],
+                mode='payment',
+                success_url=f"{getattr(settings, 'FRONTEND_URL', 'http://localhost:3000')}/payment/success?session_id={{CHECKOUT_SESSION_ID}}",
+                cancel_url=f"{getattr(settings, 'FRONTEND_URL', 'http://localhost:3000')}/payment/cancel",
+                metadata={
+                    'tip_id': tip.id,
+                    'talker_id': request.user.id,
+                    'listener_id': listener.id,
+                    'type': 'tip'
+                },
+                payment_intent_data={
+                    'metadata': {
+                        'tip_id': tip.id,
+                        'talker_id': request.user.id,
+                        'listener_id': listener.id,
+                        'type': 'tip'
+                    }
+                }
+            )
+            
+            # Update tip with Stripe info
+            tip.stripe_payment_intent_id = payment_intent.id
+            tip.stripe_customer_id = stripe_customer.stripe_customer_id
+            tip.save()
+            
+            return Response({
+                "payment": {
+                    "payment_intent_id": payment_intent.id,
+                    "client_secret": payment_intent.client_secret,
+                    "status": payment_intent.status,
+                    "amount": float(amount),
+                    "currency": "usd",
+                    "payment_link": checkout_session.url,
+                    "checkout_session_id": checkout_session.id
+                }
+            })
+            
+        except User.DoesNotExist:
+            return Response(
+                {'error': 'Listener not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except stripe.error.StripeError as e:
+            logger.error(f"Stripe error creating payment intent: {str(e)}")
+            if hasattr(tip, 'id'):
+                tip.mark_failed(str(e))
+            return Response(
+                {'error': 'Payment processing error'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        except Exception as e:
+            logger.error(f"Error creating tip payment: {str(e)}")
+            if hasattr(tip, 'id'):
+                tip.mark_failed(str(e))
+            return Response(
+                {'error': 'Internal server error'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=False, methods=['get'], url_path='my-sent-tips')
+    def my_sent_tips(self, request):
+        """Get tips sent by the current talker."""
+        if request.user.user_type != 'talker':
+            return Response(
+                {'error': 'Only talkers can view sent tips'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        tips = Tip.objects.filter(talker=request.user).select_related('listener').order_by('-created_at')
+        serializer = TipSerializer(tips, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'], url_path='my-received-tips')
+    def my_received_tips(self, request):
+        """Get tips received by the current listener."""
+        if request.user.user_type != 'listener':
+            return Response(
+                {'error': 'Only listeners can view received tips'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        tips = Tip.objects.filter(listener=request.user).select_related('talker').order_by('-created_at')
+        serializer = TipSerializer(tips, many=True)
+        return Response(serializer.data)
