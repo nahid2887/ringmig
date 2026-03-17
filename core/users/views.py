@@ -2,7 +2,8 @@ from rest_framework import status, generics
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
-from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.tokens import RefreshToken, AccessToken
+from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from django.contrib.auth import authenticate, get_user_model
 from django.core.mail import send_mail
 from django.utils import timezone
@@ -11,6 +12,8 @@ from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 import random
 import string
+import requests
+import os
 from datetime import timedelta
 
 from .serializers import (
@@ -21,7 +24,8 @@ from .serializers import (
     OTPRequestSerializer,
     OTPVerificationSerializer
 )
-from .models import OTP
+from .models import OTP, CalUserMapping
+
 
 User = get_user_model()
 
@@ -365,3 +369,430 @@ class ChangePasswordView(APIView):
             user.save()
             return Response({'message': 'Password changed successfully'}, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class OAuth2TokenProxyView(APIView):
+    """
+    OAuth2 Token Proxy Endpoint
+    
+    This endpoint accepts a bearer token from an authenticated user and proxies
+    the OAuth2 token request to the self-hosted OAuth2 server, enriching the 
+    response with listener/talker user information.
+    """
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        operation_description="OAuth2 Token Proxy - Get OAuth2 token with user identification",
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            properties={
+                'grant_type': openapi.Schema(type=openapi.TYPE_STRING, description='OAuth2 grant type'),
+                'client_id': openapi.Schema(type=openapi.TYPE_STRING, description='OAuth2 client ID'),
+                'client_secret': openapi.Schema(type=openapi.TYPE_STRING, description='OAuth2 client secret'),
+                'username': openapi.Schema(type=openapi.TYPE_STRING, description='Username for password grant'),
+                'password': openapi.Schema(type=openapi.TYPE_STRING, description='Password for password grant'),
+                'refresh_token': openapi.Schema(type=openapi.TYPE_STRING, description='Refresh token for refresh_token grant'),
+                'code': openapi.Schema(type=openapi.TYPE_STRING, description='Authorization code for authorization_code grant'),
+                'redirect_uri': openapi.Schema(type=openapi.TYPE_STRING, description='Redirect URI for authorization_code grant'),
+            },
+            required=['grant_type', 'client_id']
+        ),
+        responses={
+            200: openapi.Response(
+                description='OAuth2 token response with user information',
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        'access_token': openapi.Schema(type=openapi.TYPE_STRING),
+                        'token_type': openapi.Schema(type=openapi.TYPE_STRING),
+                        'expires_in': openapi.Schema(type=openapi.TYPE_INTEGER),
+                        'refresh_token': openapi.Schema(type=openapi.TYPE_STRING),
+                        'user_info': openapi.Schema(
+                            type=openapi.TYPE_OBJECT,
+                            properties={
+                                'user_id': openapi.Schema(type=openapi.TYPE_INTEGER),
+                                'email': openapi.Schema(type=openapi.TYPE_STRING),
+                                'full_name': openapi.Schema(type=openapi.TYPE_STRING),
+                                'user_type': openapi.Schema(type=openapi.TYPE_STRING),
+                                'listener_id': openapi.Schema(type=openapi.TYPE_STRING),
+                                'talker_id': openapi.Schema(type=openapi.TYPE_STRING),
+                            }
+                        )
+                    }
+                )
+            ),
+            400: 'OAuth2 request failed',
+            401: 'Unauthorized - Invalid bearer token'
+        }
+    )
+    def post(self, request):
+        """
+        Proxy OAuth2 token refresh request with user identification.
+        
+        Accepts a bearer token which identifies the current user (listener or talker),
+        uses refresh_token grant type to get a new access token from the self-hosted 
+        OAuth2 server, and enriches the response with user identification information.
+        
+        The request can include booking data (listener_id, start_time, etc) which will
+        be returned in the response for the client to use, but only OAuth2 fields
+        are forwarded to the external OAuth2 server.
+        """
+        try:
+            # Get authenticated user from bearer token
+            user = request.user
+            
+            if not user.is_authenticated:
+                return Response(
+                    {'error': 'Unauthorized - Invalid bearer token'},
+                    status=status.HTTP_401_UNAUTHORIZED
+                )
+            
+            # Extract full payload from request
+            full_payload = request.data.copy()
+            
+            # Extract ONLY OAuth2 relevant fields
+            oauth2_payload = {}
+            
+            # Use refresh_token grant type
+            oauth2_payload['grant_type'] = 'refresh_token'
+            
+            # Add Cal.com OAuth2 credentials
+            oauth2_payload['client_id'] = settings.CALCOM_CLIENT_ID
+            oauth2_payload['client_secret'] = settings.CALCOM_CLIENT_SECRET
+            
+            # Use provided refresh_token or use the Cal.com one from settings
+            if 'refresh_token' in full_payload and full_payload['refresh_token']:
+                oauth2_payload['refresh_token'] = full_payload['refresh_token']
+            else:
+                # Get refresh token from environment
+                refresh_token = os.getenv('CALCOM_REFRESH_TOKEN', '')
+                if refresh_token:
+                    oauth2_payload['refresh_token'] = refresh_token
+                else:
+                    return Response(
+                        {'error': 'refresh_token is required. Provide it in payload or set CALCOM_REFRESH_TOKEN in environment.'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            
+            # Make request to self-hosted OAuth2 token endpoint
+            oauth2_url = settings.OAUTH2_TOKEN_ENDPOINT
+            
+            # Forward ONLY OAuth2 fields to the external server
+            try:
+                oauth2_response = requests.post(
+                    oauth2_url,
+                    data=oauth2_payload,
+                    timeout=10
+                )
+                
+                # Check for errors even if status is 400
+                if oauth2_response.status_code >= 400:
+                    try:
+                        error_data = oauth2_response.json()
+                        error_msg = error_data.get('error_description', error_data.get('error', oauth2_response.text))
+                    except:
+                        error_msg = oauth2_response.text
+                    
+                    return Response(
+                        {
+                            'error': f'OAuth2 server error: {error_msg}',
+                            'status': oauth2_response.status_code,
+                            'payload_sent': dict(oauth2_payload)
+                        },
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                oauth2_response.raise_for_status()
+            except requests.exceptions.ConnectionError as e:
+                return Response(
+                    {'error': f'Cannot connect to OAuth2 server at {oauth2_url}: {str(e)}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            except requests.exceptions.RequestException as e:
+                return Response(
+                    {'error': f'OAuth2 request failed: {str(e)}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Parse OAuth2 response
+            token_data = oauth2_response.json()
+            
+            # Save Cal.com user mapping for this authenticated user
+            # This stores which local user is connected to which Cal.com account
+            try:
+                cal_mapping, created = CalUserMapping.objects.update_or_create(
+                    user=user,
+                    defaults={
+                        'cal_access_token': token_data.get('access_token', ''),
+                        'cal_refresh_token': token_data.get('refresh_token', ''),
+                        'token_expires_at': timezone.now() + timedelta(seconds=token_data.get('expires_in', 3600)),
+                        'cal_user_id': user.email,  # Map to local user email
+                    }
+                )
+                status_msg = "created" if created else "updated"
+                print(f"✓ Cal.com mapping {status_msg} for User {user.id} ({user.email})")
+            except Exception as e:
+                print(f"⚠ Warning: Could not save Cal.com mapping: {str(e)}")
+            
+            # Include only OAuth2 tokens and user info
+            response_data = {
+                'access_token': token_data.get('access_token'),
+                'token_type': token_data.get('token_type', 'Bearer'),
+                'expires_in': token_data.get('expires_in'),
+                'refresh_token': token_data.get('refresh_token'),
+            }
+            
+            # Add authenticated user information from bearer token
+            user_info = {
+                'user_id': user.id,
+                'email': user.email,
+                'full_name': user.full_name,
+                'user_type': user.user_type,
+            }
+            
+            # Add listener/talker specific IDs
+            if user.user_type == 'listener':
+                try:
+                    listener_profile = user.listener_profile
+                    user_info['listener_id'] = listener_profile.id
+                    user_info['listener_name'] = listener_profile.get_full_name()
+                except:
+                    user_info['listener_id'] = None
+            
+            elif user.user_type == 'talker':
+                try:
+                    talker_profile = user.talker_profile
+                    user_info['talker_id'] = talker_profile.id
+                    user_info['talker_name'] = talker_profile.get_full_name()
+                except:
+                    user_info['talker_id'] = None
+            
+            response_data['user'] = user_info
+            
+            # Include any user context data passed in the request
+            user_context = {}
+            context_field_names = ['listener_id', 'local_event_type_id', 'start_time', 'timezone', 'notes', 'talker_id']
+            for field in context_field_names:
+                if field in full_payload:
+                    user_context[field] = full_payload[field]
+            
+            if user_context:
+                response_data['user_context'] = user_context
+            
+            return Response(response_data, status=oauth2_response.status_code)
+        
+        except Exception as e:
+            return Response(
+                {'error': f'Internal server error: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+class UserSchedulingProfileView(APIView):
+    """
+    Get user's Cal.com scheduling profile and configuration.
+    
+    This endpoint returns the authenticated user's Cal.com information needed
+    to display their booking page using Cal.com Atoms (BookerEmbed).
+    
+    Each user gets their own separate scheduling profile.
+    """
+    permission_classes = [IsAuthenticated]
+    
+    @swagger_auto_schema(
+        operation_description="Get user's Cal.com scheduling profile for Atoms integration",
+        responses={
+            200: openapi.Response(
+                description='User scheduling profile with Cal.com info',
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        'user_id': openapi.Schema(type=openapi.TYPE_INTEGER),
+                        'email': openapi.Schema(type=openapi.TYPE_STRING),
+                        'full_name': openapi.Schema(type=openapi.TYPE_STRING),
+                        'user_type': openapi.Schema(type=openapi.TYPE_STRING),
+                        'cal_username': openapi.Schema(type=openapi.TYPE_STRING),
+                        'has_cal_token': openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                        'token_expires_at': openapi.Schema(type=openapi.TYPE_STRING),
+                        'profile_type': openapi.Schema(type=openapi.TYPE_STRING),
+                    }
+                )
+            ),
+            401: 'Unauthorized'
+        }
+    )
+    def get(self, request):
+        """
+        Returns the authenticated user's scheduling profile.
+        
+        Frontend can use this info to:
+        1. Get the username to pass to Cal.com Atoms
+        2. Check if user has valid Cal.com token
+        3. Know token expiry for token refresh UI
+        """
+        try:
+            user = request.user
+            
+            # Get or create Cal.com mapping
+            try:
+                cal_mapping = user.cal_mapping
+                has_token = True
+                token_expires_at = cal_mapping.token_expires_at.isoformat()
+                cal_username = cal_mapping.cal_user_id or user.email
+            except CalUserMapping.DoesNotExist:
+                has_token = False
+                token_expires_at = None
+                cal_username = user.email
+            
+            response_data = {
+                'user_id': user.id,
+                'email': user.email,
+                'full_name': user.full_name,
+                'user_type': user.user_type,
+                'cal_username': cal_username,
+                'has_cal_token': has_token,
+                'token_expires_at': token_expires_at,
+                'profile_type': 'talker' if user.user_type == 'talker' else 'listener',
+            }
+            
+            # Add role-specific info
+            if user.user_type == 'talker':
+                try:
+                    talker = user.talker_profile
+                    response_data['talker_id'] = talker.id
+                    response_data['talker_name'] = talker.get_full_name()
+                except:
+                    pass
+            elif user.user_type == 'listener':
+                try:
+                    listener = user.listener_profile
+                    response_data['listener_id'] = listener.id
+                    response_data['listener_name'] = listener.get_full_name()
+                except:
+                    pass
+            
+            return Response(response_data, status=status.HTTP_200_OK)
+        
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to get scheduling profile: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class UserEventTypesView(APIView):
+    """
+    Get user's Cal.com event types for scheduling.
+    
+    This endpoint fetches all available event types for the authenticated user
+    from the Cal.com server, allowing them to choose which schedule to display.
+    """
+    permission_classes = [IsAuthenticated]
+    
+    @swagger_auto_schema(
+        operation_description="Get user's Cal.com event types",
+        responses={
+            200: openapi.Response(
+                description='List of user event types',
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        'event_types': openapi.Schema(
+                            type=openapi.TYPE_ARRAY,
+                            items=openapi.Schema(
+                                type=openapi.TYPE_OBJECT,
+                                properties={
+                                    'id': openapi.Schema(type=openapi.TYPE_INTEGER),
+                                    'title': openapi.Schema(type=openapi.TYPE_STRING),
+                                    'slug': openapi.Schema(type=openapi.TYPE_STRING),
+                                    'description': openapi.Schema(type=openapi.TYPE_STRING),
+                                    'length': openapi.Schema(type=openapi.TYPE_INTEGER),
+                                }
+                            )
+                        )
+                    }
+                )
+            ),
+            400: 'No Cal.com token found',
+            401: 'Unauthorized'
+        }
+    )
+    def get(self, request):
+        """
+        Fetch event types from Cal.com API for the authenticated user.
+        
+        Uses the stored Cal.com access token to query the Cal.com server
+        for all event types defined by this user.
+        """
+        try:
+            user = request.user
+            
+            # Check if user has Cal.com token
+            try:
+                cal_mapping = user.cal_mapping
+            except CalUserMapping.DoesNotExist:
+                return Response(
+                    {'error': 'User has not connected Cal.com account. Please call OAuth2 token endpoint first.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Check if token is expired
+            if cal_mapping.is_token_expired():
+                return Response(
+                    {'error': 'Cal.com token has expired. Please refresh token.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Fetch event types from Cal.com API
+            cal_api_url = settings.CALCOM_API_BASE_URL
+            headers = {
+                'Authorization': f'Bearer {cal_mapping.cal_access_token}',
+                'cal-api-version': '2024-08-06'
+            }
+            
+            try:
+                response = requests.get(
+                    f'{cal_api_url}/event-types',
+                    headers=headers,
+                    timeout=10
+                )
+                
+                if response.status_code >= 400:
+                    error_msg = response.json().get('message', response.text) if response.text else 'Unknown error'
+                    return Response(
+                        {'error': f'Cal.com API error: {error_msg}'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                event_types_data = response.json()
+                
+                # Extract relevant fields
+                event_types = []
+                events = event_types_data.get('data', [])
+                
+                if isinstance(events, list):
+                    for et in events:
+                        event_types.append({
+                            'id': et.get('id'),
+                            'title': et.get('title'),
+                            'slug': et.get('slug'),
+                            'description': et.get('description', ''),
+                            'length': et.get('length'),
+                        })
+                
+                return Response({
+                    'user_id': user.id,
+                    'email': user.email,
+                    'event_types': event_types
+                }, status=status.HTTP_200_OK)
+            
+            except requests.exceptions.RequestException as e:
+                return Response(
+                    {'error': f'Failed to fetch event types from Cal.com: {str(e)}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        
+        except Exception as e:
+            return Response(
+                {'error': f'Internal server error: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

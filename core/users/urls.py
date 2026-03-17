@@ -7,7 +7,8 @@ from .views import (
     UserLogoutView,
     UserProfileView,
     ChangePasswordView,
-    OTPVerificationView
+    OTPVerificationView,
+    OAuth2TokenProxyView
 )
 from .dashboard_views import (
     SuperAdminDashboardView,
@@ -24,6 +25,9 @@ urlpatterns = [
     path('profile/', UserProfileView.as_view(), name='profile'),
     path('change-password/', ChangePasswordView.as_view(), name='change-password'),
     path('token/refresh/', TokenRefreshView.as_view(), name='token-refresh'),
+    
+    # OAuth2 Proxy Endpoint - Multi-user OAuth2 token with user identification
+    path('oauth2/token/', OAuth2TokenProxyView.as_view(), name='oauth2-token-proxy'),
     
     # SuperAdmin Dashboard
     path('dashboard/', SuperAdminDashboardView.as_view(), name='dashboard'),

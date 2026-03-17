@@ -211,6 +211,8 @@ CORS_ALLOWED_ORIGINS = [
     "http://127.0.0.1:3000",
     "http://127.0.0.1:8000",
     "http://127.0.0.1:8005",
+    "http://localhost:5174",
+    "http://localhost:5174",
 ]
 CORS_ALLOW_CREDENTIALS = True
 
@@ -235,6 +237,8 @@ CORS_ALLOW_HEADERS = [
     'user-agent',
     'x-csrftoken',
     'x-requested-with',
+    'ngrok-skip-browser-warning',
+    'cal-api-version',
 ]
 
 # Email Configuration - Load from .env file
@@ -280,3 +284,14 @@ AGORA_PRIMARY_CERTIFICATE = os.getenv('AGORA_PRIMARY_CERTIFICATE', '197ae79cc31e
 AGORA_TOKEN_EXPIRY_SECONDS = 7200  # 2 hours
 AGORA_DEFAULT_VIDEO_PROFILE = '480p_4'  # 640x480, 30fps
 AGORA_HIGH_QUALITY_VIDEO_PROFILE = '720p_5'  # 1280x720, 30fps
+
+# Cal.com Configuration (Self-hosted)
+CALCOM_API_BASE_URL = os.getenv('CALCOM_API_BASE_URL', 'https://dane-evolved-loon.ngrok-free.app/v2')
+CALCOM_CLIENT_ID = os.getenv('CALCOM_CLIENT_ID', '0502aab584e5dc3a6b72f6c0deb615f0d997e6085f44bc07cf55bd78043781ac')
+CALCOM_CLIENT_SECRET = os.getenv('CALCOM_CLIENT_SECRET', '085c4cba5412ad53e8be265f75611f283cbe1a3bcb8747767b5b0fc92c3dcf21')
+CALCOM_REDIRECT_URI = os.getenv('CALCOM_REDIRECT_URI', 'http://10.10.13.27:8005/api/booking/oauth/callback/')
+CALCOM_API_KEY = os.getenv('CALCOM_API_KEY', 'cal_live_249a1a8781ebbfd9f924670f9c1f98ac')
+CALCOM_LICENSE_KEY = os.getenv('CALCOM_LICENSE_KEY', 'cal_live_pxLUGjtT5eYaUtGe2C2gqEXi')
+
+# OAuth2 Token Endpoint Configuration
+OAUTH2_TOKEN_ENDPOINT = os.getenv('OAUTH2_TOKEN_ENDPOINT', 'http://10.10.13.24:80/v2/auth/oauth2/token')

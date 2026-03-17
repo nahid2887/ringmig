@@ -33,6 +33,7 @@ urlpatterns = [
     
     # API Endpoints
     path('api/auth/', include('users.urls')),
+    path('api/users/', include('users.urls')),
     path('api/listener/', include('listener.urls')),
     path('api/talker/', include('talker.urls')),
     path('api/chat/', include('chat.urls')),

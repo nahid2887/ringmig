@@ -176,6 +176,7 @@ class BlockingWebSocketTest(TestCase):
             'is_typing': True
         })
         
+        
         # Should not receive any response or error (silently ignored)
         # Wait a bit to ensure nothing is sent
         import asyncio

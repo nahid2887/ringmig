@@ -100,3 +100,36 @@ class OTP(models.Model):
         """Check if OTP has expired."""
         from django.utils import timezone
         return timezone.now() > self.expires_at
+
+class CalUserMapping(models.Model):
+    """Model to store Cal.com OAuth2 tokens for each local user.
+    
+    This enables multi-user scheduling where each Talker/Listener has their own
+    Cal.com authentication and can maintain their own schedule independently.
+    """
+    
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='cal_mapping')
+    cal_access_token = models.TextField()
+    cal_refresh_token = models.TextField()
+    token_expires_at = models.DateTimeField()
+    cal_user_id = models.CharField(max_length=255, blank=True, null=True, help_text="Cal.com user ID or email")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        verbose_name = _('Cal.com User Mapping')
+        verbose_name_plural = _('Cal.com User Mappings')
+    
+    def __str__(self):
+        return f"Cal.com mapping for {self.user.email}"
+    
+    def is_token_expired(self):
+        """Check if the Cal.com token has expired."""
+        from django.utils import timezone
+        return timezone.now() > self.token_expires_at
+    
+    def needs_refresh(self):
+        """Check if token needs refresh (5 minutes before expiry)."""
+        from django.utils import timezone
+        from datetime import timedelta
+        return timezone.now() > (self.token_expires_at - timedelta(minutes=5))

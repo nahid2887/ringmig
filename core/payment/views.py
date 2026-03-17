@@ -1158,7 +1158,91 @@ class StripeWebhookView(APIView):
                     'call_package_id': call_package_id
                 })
             
-            # Handle booking checkout
+            # Handle Cal.com booking checkout
+            if session_type == 'calcom_booking':
+                calcom_booking_id = session['metadata'].get('booking_id')
+                logger.info(f"🔔 Cal.com booking webhook received: booking_id={calcom_booking_id}, payment_intent={payment_intent_id}")
+                
+                from booking.models import Booking as CalComBooking
+                from booking.calcom_utils import get_calcom_client
+                
+                try:
+                    cal_booking_obj = CalComBooking.objects.get(id=calcom_booking_id)
+                    
+                    # Update payment status
+                    cal_booking_obj.stripe_payment_intent_id = payment_intent_id
+                    cal_booking_obj.is_paid = True
+                    cal_booking_obj.status = 'confirmed'
+                    cal_booking_obj.save(update_fields=['stripe_payment_intent_id', 'is_paid', 'status', 'updated_at'])
+                    
+                    logger.info(f"✓ Booking {cal_booking_obj.id} marked as paid and confirmed")
+                    
+                    # Create booking in Cal.com if not already created
+                    if not cal_booking_obj.cal_booking_id:
+                        try:
+                            client = get_calcom_client(cal_booking_obj.listener)
+                            
+                            # Get talker name
+                            talker_name = cal_booking_obj.talker.full_name
+                            try:
+                                talker_name = cal_booking_obj.talker.talker_profile.get_full_name() or talker_name
+                            except:
+                                pass
+                            
+                            logger.info(f"📡 Creating Cal.com booking: event_type={cal_booking_obj.event_type.cal_event_type_id}, attendee={cal_booking_obj.talker.email}")
+                            
+                            # Create in Cal.com
+                            cal_booking_data = client.create_booking(
+                                event_type_id=int(cal_booking_obj.event_type.cal_event_type_id),
+                                start_time=cal_booking_obj.start_time,
+                                attendee_name=talker_name,
+                                attendee_email=cal_booking_obj.talker.email,
+                                attendee_timezone=cal_booking_obj.timezone,
+                                notes=cal_booking_obj.talker_notes,
+                                metadata={
+                                    'talker_id': cal_booking_obj.talker.id,
+                                    'listener_id': cal_booking_obj.listener.id,
+                                    'source': 'ringmig',
+                                    'payment_intent_id': payment_intent_id,
+                                    'paid': True
+                                }
+                            )
+                            
+                            logger.info(f"📡 Cal.com API response: {cal_booking_data}")
+                            
+                            # Update booking with Cal.com data
+                            cal_id = str(cal_booking_data.get('id', ''))
+                            cal_uid = cal_booking_data.get('uid', '')
+                            meeting_url = cal_booking_data.get('meetingUrl', '')
+                            location = cal_booking_data.get('location', '')
+                            
+                            cal_booking_obj.cal_booking_id = cal_id if cal_id else None
+                            cal_booking_obj.cal_booking_uid = cal_uid
+                            cal_booking_obj.meeting_url = meeting_url
+                            cal_booking_obj.location = location
+                            cal_booking_obj.save(update_fields=['cal_booking_id', 'cal_booking_uid', 'meeting_url', 'location', 'updated_at'])
+                            
+                            logger.info(f"✅ Cal.com booking created: local_id={cal_booking_obj.id}, cal_id={cal_id}, uid={cal_uid}, meeting_url={meeting_url}")
+                        
+                        except Exception as e:
+                            logger.error(f"❌ Failed to create Cal.com booking: {str(e)}", exc_info=True)
+                    
+                    return Response({
+                        'success': True,
+                        'message': f'Booking {cal_booking_obj.id} confirmed',
+                        'booking_id': cal_booking_obj.id,
+                        'cal_booking_id': cal_booking_obj.cal_booking_id
+                    })
+                
+                except CalComBooking.DoesNotExist:
+                    logger.error(f"❌ Cal.com booking {calcom_booking_id} not found in database")
+                    return Response({'status': 'processed'})
+                
+                except Exception as e:
+                    logger.error(f"❌ Error processing Cal.com booking webhook: {str(e)}", exc_info=True)
+                    return Response({'status': 'error', 'message': str(e)})
+            
+            # Handle old payment booking checkout
             if not booking_id:
                 logger.warning(f"No booking_id or call_package_id in metadata for session {session['id']}")
                 return Response({'status': 'processed'})
