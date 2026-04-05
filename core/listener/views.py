@@ -10,7 +10,8 @@ from decimal import Decimal
 from .models import ListenerProfile, ListenerRating, ListenerBalance, ListenerBlockedTalker
 from .serializers import (ListenerProfileSerializer, ListenerListSerializer, ListenerRatingSerializer,
                          BlockTalkerSerializer, UnblockTalkerSerializer, BlockedTalkerListSerializer,
-                         ListenerCallAttemptSerializer, ListenerCallAttemptDetailSerializer)
+                         ListenerCallAttemptSerializer, ListenerCallAttemptDetailSerializer,
+                         ListenerBalanceSerializer)
 
 
 class IsListenerUser(IsAuthenticated):
@@ -504,9 +505,13 @@ class ListenerBalanceViewSet(viewsets.ReadOnlyModelViewSet):
     """ViewSet for viewing listener balance (read-only)."""
     
     permission_classes = [IsAuthenticated]
+    serializer_class = ListenerBalanceSerializer
     
     def get_queryset(self):
         """Only show balance for current listener."""
+        if getattr(self, 'swagger_fake_view', False) or self.request is None:
+            return ListenerBalance.objects.none()
+
         user = self.request.user
         if user.user_type == 'listener':
             return ListenerBalance.objects.filter(listener=user)

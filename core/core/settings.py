@@ -49,6 +49,7 @@ INSTALLED_APPS = [
     'talker',
     'chat',
     'payment',
+    'bokking',
 ]
 
 MIDDLEWARE = [
@@ -88,6 +89,7 @@ WSGI_APPLICATION = 'core.wsgi.application'
 ASGI_APPLICATION = 'core.asgi.application'
 
 # Channel Layers Configuration
+# Using InMemoryChannelLayer for local development
 CHANNEL_LAYERS = {
     'default': {
         'BACKEND': 'channels.layers.InMemoryChannelLayer'

@@ -937,11 +937,42 @@ class StripeWebhookView(APIView):
         """Auto-confirm booking/call package when checkout/payment succeeds."""
         try:
             booking_id = session['metadata'].get('booking_id')
+            session_booking_id = session['metadata'].get('session_booking_id')
             call_package_id = session['metadata'].get('call_package_id')
             call_session_id = session['metadata'].get('call_session_id')
             is_extension = session['metadata'].get('is_extension') == 'true'
             payment_intent_id = session.get('payment_intent')
             session_type = session['metadata'].get('type')
+
+            # Handle bokking SessionBooking checkout completion
+            if session_booking_id:
+                from bokking.models import SessionBooking
+                from bokking.views import broadcast_availability_update
+
+                try:
+                    session_booking = SessionBooking.objects.select_related('listener').get(id=session_booking_id)
+
+                    if session_booking.is_payment_expired:
+                        listener = session_booking.listener
+                        session_booking.delete()
+                        if hasattr(listener, 'booking_availability'):
+                            broadcast_availability_update(listener.booking_availability)
+                        logger.warning(f"Expired session booking {session_booking_id} deleted on late checkout completion")
+                        return Response({'status': 'processed'})
+
+                    session_booking.status = 'completed'
+                    session_booking.transaction_id = payment_intent_id or session_booking.transaction_id
+                    session_booking.payment_completed_at = timezone.now()
+                    session_booking.save(update_fields=['status', 'transaction_id', 'payment_completed_at', 'updated_at'])
+
+                    if hasattr(session_booking.listener, 'booking_availability'):
+                        broadcast_availability_update(session_booking.listener.booking_availability)
+
+                    logger.info(f"✓ Session booking {session_booking_id} confirmed via checkout.session.completed")
+                    return Response({'status': 'processed'})
+                except SessionBooking.DoesNotExist:
+                    logger.warning(f"Session booking {session_booking_id} not found for checkout completion")
+                    return Response({'status': 'processed'})
             
             # Handle payout collection (listener completing payout checkout)
             if session_type == 'payout_collection':
@@ -1281,9 +1312,40 @@ class StripeWebhookView(APIView):
         """Handle payment intent succeeded event."""
         try:
             booking_id = payment_intent['metadata'].get('booking_id')
+            session_booking_id = payment_intent['metadata'].get('session_booking_id')
             call_package_id = payment_intent['metadata'].get('call_package_id')
             tip_id = payment_intent['metadata'].get('tip_id')
             payment_type = payment_intent['metadata'].get('type')
+
+            # Handle bokking SessionBooking payment intent
+            if session_booking_id:
+                from bokking.models import SessionBooking
+                from bokking.views import broadcast_availability_update
+
+                try:
+                    session_booking = SessionBooking.objects.select_related('listener').get(id=session_booking_id)
+
+                    if session_booking.is_payment_expired:
+                        listener = session_booking.listener
+                        session_booking.delete()
+                        if hasattr(listener, 'booking_availability'):
+                            broadcast_availability_update(listener.booking_availability)
+                        logger.warning(f"Expired session booking {session_booking_id} deleted on late payment_intent.succeeded")
+                        return Response({'status': 'processed'})
+
+                    session_booking.status = 'completed'
+                    session_booking.transaction_id = payment_intent['id']
+                    session_booking.payment_completed_at = timezone.now()
+                    session_booking.save(update_fields=['status', 'transaction_id', 'payment_completed_at', 'updated_at'])
+
+                    if hasattr(session_booking.listener, 'booking_availability'):
+                        broadcast_availability_update(session_booking.listener.booking_availability)
+
+                    logger.info(f"✓ Payment succeeded for session booking {session_booking_id}")
+                    return Response({'status': 'processed'})
+                except SessionBooking.DoesNotExist:
+                    logger.warning(f"Session booking {session_booking_id} not found for payment_intent.succeeded")
+                    return Response({'status': 'processed'})
             
             # Handle tip payment
             if tip_id or payment_type == 'tip':

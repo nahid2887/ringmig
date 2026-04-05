@@ -38,6 +38,7 @@ urlpatterns = [
     path('api/talker/', include('talker.urls')),
     path('api/chat/', include('chat.urls')),
     path('api/payment/', include('payment.urls')),
+    path('api/bokking/', include('bokking.urls')),
     
     # Swagger UI
     path('swagger/', schema_view.with_ui('swagger', cache_timeout=0), name='schema-swagger-ui'),

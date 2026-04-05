@@ -282,3 +282,22 @@ class BlockedTalkerListSerializer(serializers.ModelSerializer):
                     return request.build_absolute_uri(profile.profile_image.url)
                 return profile.profile_image.url
         return None
+
+
+class ListenerBalanceSerializer(serializers.ModelSerializer):
+    """Serializer for read-only listener balance details."""
+
+    listener_email = serializers.CharField(source='listener.email', read_only=True)
+
+    class Meta:
+        from .models import ListenerBalance
+        model = ListenerBalance
+        fields = [
+            'id',
+            'listener_email',
+            'available_balance',
+            'total_earned',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = fields

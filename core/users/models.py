@@ -133,3 +133,30 @@ class CalUserMapping(models.Model):
         from django.utils import timezone
         from datetime import timedelta
         return timezone.now() > (self.token_expires_at - timedelta(minutes=5))
+
+
+class PasswordResetOTP(models.Model):
+    """Model to store OTP codes for password reset."""
+    
+    email = models.EmailField()
+    otp_code = models.CharField(max_length=6)
+    is_used = models.BooleanField(default=False)
+    expires_at = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        verbose_name = _('Password Reset OTP')
+        verbose_name_plural = _('Password Reset OTPs')
+        unique_together = ('email', 'is_used')
+    
+    def __str__(self):
+        return f"Password Reset OTP for {self.email}"
+    
+    def is_expired(self):
+        """Check if OTP has expired."""
+        from django.utils import timezone
+        return timezone.now() > self.expires_at
+    
+    def is_valid(self):
+        """Check if OTP is valid (not expired and not used)."""
+        return not self.is_expired() and not self.is_used

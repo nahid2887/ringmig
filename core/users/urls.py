@@ -8,7 +8,10 @@ from .views import (
     UserProfileView,
     ChangePasswordView,
     OTPVerificationView,
-    OAuth2TokenProxyView
+    OAuth2TokenProxyView,
+    ForgotPasswordRequestView,
+    VerifyPasswordResetOTPView,
+    ChangePasswordAfterResetView
 )
 from .dashboard_views import (
     SuperAdminDashboardView,
@@ -25,6 +28,11 @@ urlpatterns = [
     path('profile/', UserProfileView.as_view(), name='profile'),
     path('change-password/', ChangePasswordView.as_view(), name='change-password'),
     path('token/refresh/', TokenRefreshView.as_view(), name='token-refresh'),
+    
+    # Password Reset Flow
+    path('forgot-password/', ForgotPasswordRequestView.as_view(), name='forgot-password'),  # Sends OTP to reset password
+    path('verify-password-reset-otp/', VerifyPasswordResetOTPView.as_view(), name='verify-password-reset-otp'),  # Verifies OTP
+    path('change-password-after-reset/', ChangePasswordAfterResetView.as_view(), name='change-password-after-reset'),  # Changes password
     
     # OAuth2 Proxy Endpoint - Multi-user OAuth2 token with user identification
     path('oauth2/token/', OAuth2TokenProxyView.as_view(), name='oauth2-token-proxy'),

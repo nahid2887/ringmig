@@ -2,7 +2,7 @@ from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from django.utils.translation import gettext_lazy as _
-from .models import OTP
+from .models import OTP, PasswordResetOTP
 
 User = get_user_model()
 
@@ -134,4 +134,37 @@ class ChangePasswordSerializer(serializers.Serializer):
     def validate(self, attrs):
         if attrs['new_password'] != attrs['confirm_password']:
             raise serializers.ValidationError({'confirm_password': _('Passwords do not match.')})
+        return attrs
+
+
+class ForgotPasswordRequestSerializer(serializers.Serializer):
+    """Serializer for forgot password - request OTP by email."""
+    email = serializers.EmailField()
+    
+    def validate_email(self, value):
+        """Check if email exists in the system."""
+        if not User.objects.filter(email=value).exists():
+            raise serializers.ValidationError(_('Email is not registered.'))
+        return value
+
+
+class VerifyPasswordResetOTPSerializer(serializers.Serializer):
+    """Serializer for verifying password reset OTP."""
+    email = serializers.EmailField()
+    otp_code = serializers.CharField(max_length=6, min_length=6)
+
+
+class ChangePasswordAfterResetSerializer(serializers.Serializer):
+    """Serializer for changing password after OTP verification."""
+    email = serializers.EmailField()
+    new_password = serializers.CharField(write_only=True, validators=[validate_password])
+    confirm_password = serializers.CharField(write_only=True)
+    
+    def validate(self, attrs):
+        if attrs['new_password'] != attrs['confirm_password']:
+            raise serializers.ValidationError({'confirm_password': _('Passwords do not match.')})
+        
+        if not User.objects.filter(email=attrs['email']).exists():
+            raise serializers.ValidationError({'email': _('Email is not registered.')})
+        
         return attrs
