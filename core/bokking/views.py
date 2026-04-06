@@ -26,6 +26,55 @@ from .booking_payments import create_session_booking_payment_intent, confirm_ses
 User = get_user_model()
 
 
+def _flatten_validation_errors(errors, prefix=""):
+    """Flatten DRF validation errors into a readable field/message list."""
+    items = []
+
+    if isinstance(errors, dict):
+        for key, value in errors.items():
+            next_prefix = f"{prefix}.{key}" if prefix else str(key)
+            items.extend(_flatten_validation_errors(value, next_prefix))
+        return items
+
+    if isinstance(errors, list):
+        # Handle list of nested objects (e.g. time_slots)
+        if all(isinstance(entry, dict) for entry in errors):
+            for index, entry in enumerate(errors):
+                next_prefix = f"{prefix}[{index}]" if prefix else f"[{index}]"
+                items.extend(_flatten_validation_errors(entry, next_prefix))
+            return items
+
+        # Handle list of scalar error messages
+        for entry in errors:
+            if isinstance(entry, (dict, list)):
+                items.extend(_flatten_validation_errors(entry, prefix))
+            else:
+                items.append({
+                    'field': prefix or 'non_field_errors',
+                    'message': str(entry),
+                })
+        return items
+
+    items.append({
+        'field': prefix or 'non_field_errors',
+        'message': str(errors),
+    })
+    return items
+
+
+def _availability_update_error_response(serializer):
+    """Build a consistent, meaningful validation error payload."""
+    return {
+        'error': 'Validation failed while updating availability.',
+        'message': 'Please review the fields below and submit again.',
+        'errors': _flatten_validation_errors(serializer.errors),
+        'hint': {
+            'buffer_time_minutes': 'Must be 0 or greater.',
+            'time_slots': 'Provide at least one slot. Each slot needs day_of_week (0-6), start_time, end_time, and start_time must be before end_time.',
+        }
+    }
+
+
 def _build_base_availability_time(listener, days=7):
     """Build raw availability schedule by date (not reduced by bookings)."""
     try:
@@ -371,6 +420,15 @@ class ListenerAvailabilityViewSet(viewsets.ViewSet):
                 status=status.HTTP_404_NOT_FOUND
             )
 
+        if not request.data:
+            return Response(
+                {
+                    'error': 'Request body is empty.',
+                    'message': 'Send at least one field to update: buffer_time_minutes and/or time_slots.'
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         serializer = ListenerAvailabilityCreateUpdateSerializer(
             availability,
             data=request.data,
@@ -385,7 +443,11 @@ class ListenerAvailabilityViewSet(viewsets.ViewSet):
             broadcast_availability_update(availability)
             
             return Response(response_serializer.data, status=status.HTTP_200_OK)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(
+            _availability_update_error_response(serializer),
+            status=status.HTTP_400_BAD_REQUEST
+        )
 
     @swagger_auto_schema(
         operation_description="Update only the buffer time between sessions",
