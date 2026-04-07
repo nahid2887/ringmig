@@ -3,10 +3,14 @@ from decimal import Decimal
 import uuid
 
 from django.contrib.auth import get_user_model
+from django.core.mail import send_mail
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
+from django.conf import settings
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
+from channels.layers import get_channel_layer
+from asgiref.sync import async_to_sync
 
 User = get_user_model()
 
@@ -257,6 +261,16 @@ class SessionBooking(models.Model):
         blank=True,
         help_text='When payment was completed'
     )
+    talker_reminder_sent_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text='When 20-minute reminder email was sent to talker'
+    )
+    listener_reminder_sent_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text='When 20-minute reminder email was sent to listener'
+    )
 
     class Meta:
         verbose_name = 'Session Booking'
@@ -288,12 +302,155 @@ class SessionBooking(models.Model):
         return self.created_at + timedelta(minutes=self.PAYMENT_TIMEOUT_MINUTES)
 
     @property
+    def start_datetime_aware(self):
+        start_dt = datetime.combine(self.booking_date, self.start_time)
+        if timezone.is_naive(start_dt):
+            return timezone.make_aware(start_dt, timezone.get_current_timezone())
+        return start_dt
+
+    @property
     def is_payment_expired(self):
         if self.status not in ['pending', 'payment_pending']:
             return False
         if self.payment_completed_at is not None:
             return False
         return timezone.now() > self.payment_expires_at
+
+    def _build_reminder_subject(self):
+        return 'Reminder: Your session starts in 20 minutes'
+
+    def _build_reminder_message(self, recipient_role):
+        listener_name = self.listener.full_name or self.listener.email
+        talker_name = self.talker.full_name or self.talker.email
+        session_start = self.start_datetime_aware.astimezone(timezone.get_current_timezone())
+        session_end = timezone.make_aware(
+            datetime.combine(self.booking_date, self.end_time),
+            timezone.get_current_timezone()
+        ).astimezone(timezone.get_current_timezone())
+
+        if recipient_role == 'talker':
+            greeting = f"Hello {talker_name},"
+            role_line = f"Your session with listener {listener_name} starts in 20 minutes."
+        else:
+            greeting = f"Hello {listener_name},"
+            role_line = f"Your session with talker {talker_name} starts in 20 minutes."
+
+        return (
+            f"{greeting}\n\n"
+            f"{role_line}\n"
+            f"Date: {self.booking_date.isoformat()}\n"
+            f"Start Time: {session_start.strftime('%H:%M %Z')}\n"
+            f"End Time: {session_end.strftime('%H:%M %Z')}\n"
+            f"Duration: {self.duration_minutes} minutes\n\n"
+            "Please be ready before the session starts."
+        )
+
+    def _build_reminder_notification(self, recipient_role):
+        listener_name = self.listener.full_name or self.listener.email
+        talker_name = self.talker.full_name or self.talker.email
+        recipient_name = talker_name if recipient_role == 'talker' else listener_name
+
+        return {
+            'type': 'booking_reminder_notification',
+            'booking_id': str(self.id),
+            'session_id': str(self.id),
+            'recipient_role': recipient_role,
+            'booking_date': self.booking_date.isoformat(),
+            'start_time': self.start_time.strftime('%H:%M:%S'),
+            'end_time': self.end_time.strftime('%H:%M:%S'),
+            'duration_minutes': self.duration_minutes,
+            'talker': {
+                'id': self.talker_id,
+                'email': self.talker.email,
+                'full_name': talker_name,
+            },
+            'listener': {
+                'id': self.listener_id,
+                'email': self.listener.email,
+                'full_name': listener_name,
+            },
+            'message': f'Your booking starts in 20 minutes, {recipient_name}.',
+            'timestamp': timezone.now().isoformat(),
+        }
+
+    def _send_booking_websocket_reminder(self, recipient_role):
+        notification = self._build_reminder_notification(recipient_role)
+        group_name = f"user_{self.talker_id}_notifications" if recipient_role == 'talker' else f"user_{self.listener_id}_notifications"
+
+        channel_layer = get_channel_layer()
+        if channel_layer is None:
+            return
+
+        async_to_sync(channel_layer.group_send)(
+            group_name,
+            notification,
+        )
+
+    @classmethod
+    def send_upcoming_start_reminders(cls, minutes_before=20):
+        """
+        Send reminder emails for sessions starting within the next N minutes.
+        Sends separately to talker/listener and tracks each send time to avoid duplicates.
+        """
+        now = timezone.now()
+        upper_bound = now + timedelta(minutes=minutes_before)
+
+        candidate_dates = {now.date(), upper_bound.date()}
+        queryset = cls.objects.select_related('talker', 'listener').filter(
+            booking_date__in=candidate_dates,
+            status='completed',
+        )
+
+        stats = {
+            'processed': 0,
+            'talker_sent': 0,
+            'listener_sent': 0,
+            'failed': 0,
+        }
+
+        for booking in queryset:
+            start_dt = booking.start_datetime_aware
+            seconds_until_start = (start_dt - now).total_seconds()
+
+            if seconds_until_start < 0:
+                continue
+            if seconds_until_start > minutes_before * 60:
+                continue
+
+            stats['processed'] += 1
+
+            try:
+                if booking.talker_reminder_sent_at is None and booking.talker and booking.talker.email:
+                    send_mail(
+                        subject=booking._build_reminder_subject(),
+                        message=booking._build_reminder_message('talker'),
+                        from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', None),
+                        recipient_list=[booking.talker.email],
+                        fail_silently=False,
+                    )
+                    booking.talker_reminder_sent_at = timezone.now()
+                    booking._send_booking_websocket_reminder('talker')
+                    stats['talker_sent'] += 1
+
+                if booking.listener_reminder_sent_at is None and booking.listener and booking.listener.email:
+                    send_mail(
+                        subject=booking._build_reminder_subject(),
+                        message=booking._build_reminder_message('listener'),
+                        from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', None),
+                        recipient_list=[booking.listener.email],
+                        fail_silently=False,
+                    )
+                    booking.listener_reminder_sent_at = timezone.now()
+                    booking._send_booking_websocket_reminder('listener')
+                    stats['listener_sent'] += 1
+
+                if booking.talker_reminder_sent_at or booking.listener_reminder_sent_at:
+                    booking.save(update_fields=['talker_reminder_sent_at', 'listener_reminder_sent_at', 'updated_at'])
+
+            except Exception:
+                stats['failed'] += 1
+
+        return stats
 
     @classmethod
     def cleanup_expired_unpaid(cls, listener=None, booking_date=None):

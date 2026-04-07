@@ -612,6 +612,23 @@ class NotificationConsumer(AsyncWebsocketConsumer):
     async def call_ending_notification(self, event):
         """Send call ending notification to user (call time expired)."""
         await self.send(text_data=json.dumps(event['data']))
+
+    async def booking_reminder_notification(self, event):
+        """Send booking reminder notification to user."""
+        await self.send(text_data=json.dumps({
+            'type': 'booking_reminder_notification',
+            'booking_id': event.get('booking_id'),
+            'session_id': event.get('session_id'),
+            'recipient_role': event.get('recipient_role'),
+            'booking_date': event.get('booking_date'),
+            'start_time': event.get('start_time'),
+            'end_time': event.get('end_time'),
+            'duration_minutes': event.get('duration_minutes'),
+            'talker': event.get('talker'),
+            'listener': event.get('listener'),
+            'message': event.get('message'),
+            'timestamp': event.get('timestamp'),
+        }))
     
     # Database operations
     @database_sync_to_async

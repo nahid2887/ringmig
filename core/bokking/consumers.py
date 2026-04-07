@@ -1,9 +1,13 @@
 import json
 import asyncio
+import math
+from datetime import datetime
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
+from django.db.models import Q
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import AnonymousUser
+from django.utils import timezone
 from rest_framework_simplejwt.tokens import AccessToken
 from .models import ListenerAvailability, SessionBooking
 from .serializers import ListenerAvailabilityDetailSerializer
@@ -944,3 +948,419 @@ class TalkerListenerAvailabilityConsumer(PeriodicRefreshMixin, AsyncWebsocketCon
             }
         except (ListenerAvailability.DoesNotExist, User.DoesNotExist, ValueError):
             return None
+
+
+class UserBookingListConsumer(AsyncWebsocketConsumer):
+    """
+    WebSocket consumer for users (talker/listener) to view their own booking list and details.
+
+    Route: ws://localhost:8005/ws/bookings/my-bookings/?token=<jwt>
+    """
+
+    async def connect(self):
+        self.user = None
+        self.start_tasks = []
+        self.end_tasks = []
+        self.change_monitor_task = None
+        self.sent_start_booking_ids = set()
+        self.sent_end_booking_ids = set()
+        self.upcoming_signature = ''
+
+        query_string = self.scope.get('query_string', b'').decode()
+        query_params = parse_qs(query_string)
+        token = query_params.get('token', [None])[0]
+
+        if token:
+            self.user = await self.authenticate_user(token)
+
+        if not self.user or not self.user.is_authenticated:
+            await self.close(code=4001)
+            return
+
+        await self.accept()
+        await self._send_upcoming_bookings_refresh()
+        await self._schedule_upcoming_booking_events()
+        self.upcoming_signature = await self.get_upcoming_bookings_signature()
+        self.change_monitor_task = asyncio.create_task(self._monitor_upcoming_booking_changes())
+
+    async def disconnect(self, close_code):
+        for task in self.start_tasks:
+            task.cancel()
+        self.start_tasks = []
+        for task in self.end_tasks:
+            task.cancel()
+        self.end_tasks = []
+        if self.change_monitor_task:
+            self.change_monitor_task.cancel()
+
+    async def receive(self, text_data):
+        try:
+            data = json.loads(text_data)
+            message_type = data.get('type')
+
+            if message_type in ['get_my_bookings', 'get_upcoming_bookings']:
+                await self._send_upcoming_bookings_refresh()
+                await self._schedule_upcoming_booking_events()
+                self.upcoming_signature = await self.get_upcoming_bookings_signature()
+            elif message_type == 'get_booking_detail':
+                booking_id = data.get('booking_id')
+                if not booking_id:
+                    await self.send_error('booking_id is required')
+                    return
+                booking_detail = await self.get_booking_detail_for_user(booking_id)
+                if booking_detail is None:
+                    await self.send_error('Booking not found for this user')
+                    return
+                await self.send_json({
+                    'type': 'my_booking_detail',
+                    'message': 'Booking detail',
+                    'data': booking_detail,
+                })
+            else:
+                await self.send_error('Unknown message type')
+        except json.JSONDecodeError:
+            await self.send_error('Invalid JSON')
+        except Exception as e:
+            await self.send_error(f'Error: {str(e)}')
+
+    async def _send_upcoming_bookings_refresh(self):
+        bookings = await self.get_upcoming_bookings_for_user()
+        await self.send_json({
+            'type': 'upcoming_bookings',
+            'message': 'Your upcoming booking list',
+            'count': len(bookings),
+            'data': bookings,
+        })
+
+    async def _schedule_upcoming_booking_events(self):
+        for task in self.start_tasks:
+            task.cancel()
+        self.start_tasks = []
+        for task in self.end_tasks:
+            task.cancel()
+        self.end_tasks = []
+
+        schedule_items = await self.get_upcoming_booking_schedule_data()
+        now = timezone.now()
+
+        for item in schedule_items:
+            booking_id = item['booking_id']
+            start_at = item['start_datetime']
+            end_at = item['end_datetime']
+
+            if booking_id not in self.sent_start_booking_ids:
+                start_delay_seconds = (start_at - now).total_seconds()
+                if start_delay_seconds <= 0:
+                    await self._send_booking_start_payload(booking_id)
+                else:
+                    task = asyncio.create_task(self._send_at_start(booking_id, start_delay_seconds))
+                    self.start_tasks.append(task)
+
+            if booking_id not in self.sent_end_booking_ids:
+                end_delay_seconds = (end_at - now).total_seconds()
+                if end_delay_seconds <= 0:
+                    await self._send_booking_end_payload(booking_id)
+                else:
+                    task = asyncio.create_task(self._send_at_end(booking_id, end_delay_seconds))
+                    self.end_tasks.append(task)
+
+    async def _send_at_start(self, booking_id, delay_seconds):
+        try:
+            await asyncio.sleep(delay_seconds)
+            await self._send_booking_start_payload(booking_id)
+        except asyncio.CancelledError:
+            return
+
+    async def _send_at_end(self, booking_id, delay_seconds):
+        try:
+            await asyncio.sleep(delay_seconds)
+            await self._send_booking_end_payload(booking_id)
+        except asyncio.CancelledError:
+            return
+
+    async def _send_booking_start_payload(self, booking_id):
+        if booking_id in self.sent_start_booking_ids:
+            return
+
+        payload = await self.build_booking_start_payload(booking_id)
+        if payload is None:
+            return
+
+        self.sent_start_booking_ids.add(booking_id)
+        await self.send_json(payload)
+
+    async def _send_booking_end_payload(self, booking_id):
+        if booking_id in self.sent_end_booking_ids:
+            return
+
+        payload = await self.build_booking_end_payload(booking_id)
+        if payload is None:
+            return
+
+        self.sent_end_booking_ids.add(booking_id)
+        await self.send_json(payload)
+
+    async def _monitor_upcoming_booking_changes(self):
+        try:
+            while True:
+                await asyncio.sleep(10)
+                latest_signature = await self.get_upcoming_bookings_signature()
+                if latest_signature != self.upcoming_signature:
+                    self.upcoming_signature = latest_signature
+                    await self._send_upcoming_bookings_refresh()
+                    await self._schedule_upcoming_booking_events()
+        except asyncio.CancelledError:
+            return
+
+    async def send_error(self, message):
+        await self.send_json({
+            'type': 'error',
+            'message': message,
+        })
+
+    async def send_json(self, data):
+        await self.send(text_data=json.dumps(data))
+
+    @database_sync_to_async
+    def authenticate_user(self, token):
+        try:
+            decoded_token = AccessToken(token)
+            user_id = decoded_token['user_id']
+            return User.objects.get(id=user_id)
+        except Exception:
+            return AnonymousUser()
+
+    @database_sync_to_async
+    def get_upcoming_bookings_for_user(self):
+        now = timezone.now()
+        bookings = SessionBooking.objects.select_related('talker', 'listener', 'package').filter(
+            Q(talker=self.user) | Q(listener=self.user),
+            status='completed',
+            booking_date__gte=now.date(),
+        ).order_by('booking_date', 'start_time')[:200]
+
+        upcoming_bookings = []
+        for booking in bookings:
+            if booking.start_datetime_aware >= now:
+                upcoming_bookings.append(self._serialize_booking(booking))
+
+        return upcoming_bookings
+
+    @database_sync_to_async
+    def get_upcoming_booking_schedule_data(self):
+        now = timezone.now()
+        bookings = SessionBooking.objects.filter(
+            Q(talker=self.user) | Q(listener=self.user),
+            status='completed',
+            booking_date__gte=now.date(),
+        ).only('id', 'booking_date', 'start_time', 'end_time').order_by('booking_date', 'start_time')[:200]
+
+        schedule_items = []
+        for booking in bookings:
+            start_dt = booking.start_datetime_aware
+            end_dt = timezone.make_aware(
+                datetime.combine(booking.booking_date, booking.end_time),
+                timezone.get_current_timezone(),
+            )
+            if end_dt >= now:
+                schedule_items.append({
+                    'booking_id': str(booking.id),
+                    'start_datetime': start_dt,
+                    'end_datetime': end_dt,
+                })
+
+        return schedule_items
+
+    @database_sync_to_async
+    def get_upcoming_bookings_signature(self):
+        now = timezone.now()
+        bookings = SessionBooking.objects.filter(
+            Q(talker=self.user) | Q(listener=self.user),
+            status='completed',
+            booking_date__gte=now.date(),
+        ).only('id', 'updated_at', 'booking_date', 'start_time').order_by('booking_date', 'start_time')[:300]
+
+        parts = []
+        for booking in bookings:
+            if booking.start_datetime_aware >= now:
+                parts.append(f"{booking.id}:{booking.updated_at.isoformat()}")
+
+        return '|'.join(parts)
+
+    @database_sync_to_async
+    def build_booking_start_payload(self, booking_id):
+        booking = SessionBooking.objects.select_related('talker', 'listener', 'package').filter(
+            id=booking_id,
+        ).filter(
+            Q(talker=self.user) | Q(listener=self.user)
+        ).first()
+
+        if not booking:
+            return None
+
+        now = timezone.now()
+        meeting_end = timezone.make_aware(
+            datetime.combine(booking.booking_date, booking.end_time),
+            timezone.get_current_timezone(),
+        )
+
+        if now < booking.start_datetime_aware or now > meeting_end:
+            return None
+
+        from chat.call_models import CallSession
+        from chat.call_serializers import CallSessionSerializer
+        from chat.zim_utils import generate_zim_tokens_for_call
+
+        session = CallSession.objects.filter(
+            talker=booking.talker,
+            listener=booking.listener,
+            status__in=['connecting', 'active'],
+        ).order_by('-created_at').first()
+
+        if not session:
+            session = CallSession.objects.create(
+                talker=booking.talker,
+                listener=booking.listener,
+                total_minutes_purchased=booking.duration_minutes,
+                status='connecting',
+                call_type='audio',
+            )
+
+        zim_tokens = generate_zim_tokens_for_call(
+            talker_user=booking.talker,
+            listener_user=booking.listener,
+            expire_time_in_seconds=7200,
+        )
+
+        session_data = CallSessionSerializer(session).data
+        session_data['call_type'] = session.call_type
+
+        return {
+            'type': 'booking_session_ready',
+            'message': 'Meeting time started. Join call now.',
+            'booking': self._serialize_booking(booking),
+            'running_booking': {
+                **self._serialize_booking(booking),
+                'state': 'running',
+                'meeting_started_at': timezone.now().isoformat(),
+            },
+            'meeting': session_data,
+            'zim': {
+                'app_id': zim_tokens['app_id'],
+                'talker': {
+                    'user_id': zim_tokens['talker']['user_id'],
+                    'username': zim_tokens['talker']['username'],
+                    'token': zim_tokens['talker']['token'],
+                },
+                'listener': {
+                    'user_id': zim_tokens['listener']['user_id'],
+                    'username': zim_tokens['listener']['username'],
+                    'token': zim_tokens['listener']['token'],
+                },
+                'expires_at': zim_tokens['expires_at'],
+                'expire_time_seconds': zim_tokens['expire_time_seconds'],
+            },
+        }
+
+    @database_sync_to_async
+    def build_booking_end_payload(self, booking_id):
+        booking = SessionBooking.objects.select_related('talker', 'listener', 'package').filter(
+            id=booking_id,
+        ).filter(
+            Q(talker=self.user) | Q(listener=self.user)
+        ).first()
+
+        if not booking:
+            return None
+
+        now = timezone.now()
+        meeting_end = timezone.make_aware(
+            datetime.combine(booking.booking_date, booking.end_time),
+            timezone.get_current_timezone(),
+        )
+
+        if now < meeting_end:
+            return None
+
+        from chat.call_models import CallSession
+        from chat.call_serializers import CallSessionSerializer
+
+        session = CallSession.objects.filter(
+            talker=booking.talker,
+            listener=booking.listener,
+        ).order_by('-created_at').first()
+
+        if session and session.status in ['connecting', 'active']:
+            session.status = 'ended'
+            session.end_reason = 'booking_time_expired'
+            session.ended_at = now
+            session.save(update_fields=['status', 'end_reason', 'ended_at', 'updated_at'])
+
+        session_data = CallSessionSerializer(session).data if session else None
+        if session_data and session:
+            session_data['call_type'] = session.call_type
+
+        return {
+            'type': 'booking_session_ended',
+            'message': 'Meeting time ended.',
+            'booking': self._serialize_booking(booking),
+            'meeting': session_data,
+            'ended_at': now.isoformat(),
+            'reason': 'booking_time_expired',
+        }
+
+    @database_sync_to_async
+    def get_booking_detail_for_user(self, booking_id):
+        booking = SessionBooking.objects.select_related('talker', 'listener', 'package').filter(
+            id=booking_id,
+        ).filter(
+            Q(talker=self.user) | Q(listener=self.user)
+        ).first()
+
+        if not booking:
+            return None
+
+        return self._serialize_booking(booking)
+
+    def _serialize_booking(self, booking):
+        role_in_booking = 'talker' if booking.talker_id == self.user.id else 'listener'
+        now = timezone.now()
+        seconds_left = (booking.start_datetime_aware - now).total_seconds()
+        minutes_left_to_start = max(0, int(math.ceil(seconds_left / 60)))
+
+        return {
+            'id': str(booking.id),
+            'role_in_booking': role_in_booking,
+            'status': booking.status,
+            'booking_date': booking.booking_date.isoformat(),
+            'start_time': booking.start_time.strftime('%H:%M:%S'),
+            'end_time': booking.end_time.strftime('%H:%M:%S'),
+            'minutes_left_to_start': minutes_left_to_start,
+            'duration_minutes': booking.duration_minutes,
+            'buffer_time_minutes': booking.buffer_time_minutes,
+            'price': str(booking.price),
+            'app_fee': str(booking.app_fee),
+            'listener_amount': str(booking.listener_amount),
+            'payment_link': booking.payment_link,
+            'transaction_id': booking.transaction_id,
+            'talker': {
+                'id': booking.talker_id,
+                'email': booking.talker.email,
+                'full_name': booking.talker.full_name,
+            },
+            'listener': {
+                'id': booking.listener_id,
+                'email': booking.listener.email,
+                'full_name': booking.listener.full_name,
+            },
+            'package': {
+                'id': booking.package_id,
+                'name': booking.package.name if booking.package else None,
+                'description': booking.package.description if booking.package else None,
+                'duration': booking.package.duration if booking.package else None,
+            },
+            'created_at': booking.created_at.isoformat(),
+            'updated_at': booking.updated_at.isoformat(),
+            'payment_completed_at': booking.payment_completed_at.isoformat() if booking.payment_completed_at else None,
+            'payment_expires_at': booking.payment_expires_at.isoformat() if booking.status in ['pending', 'payment_pending'] else None,
+        }

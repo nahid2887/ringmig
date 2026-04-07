@@ -6,4 +6,5 @@ websocket_urlpatterns = [
     re_path(r"ws/availability/notifications/$", consumers.ListenerAvailabilityNotificationConsumer.as_asgi()),
     re_path(r"ws/availability/my-availability/$", consumers.TalkerAvailabilityConsumer.as_asgi()),
     re_path(r"ws/availability/listener/(?P<listener_id>\d+)/$", consumers.TalkerListenerAvailabilityConsumer.as_asgi()),
+    re_path(r"ws/bookings/my-bookings/$", consumers.UserBookingListConsumer.as_asgi()),
 ]
