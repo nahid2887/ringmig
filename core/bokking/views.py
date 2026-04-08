@@ -5,6 +5,8 @@ from rest_framework.permissions import IsAuthenticated
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from datetime import datetime, timedelta
+from decimal import Decimal
+from django.db import transaction
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 from asgiref.sync import async_to_sync
@@ -20,8 +22,10 @@ from .serializers import (
     SessionBookingSerializer,
     PurchaseSessionBookingSerializer,
     ConfirmSessionBookingPaymentSerializer,
+    RejectSessionBookingSerializer,
 )
 from .booking_payments import create_session_booking_payment_intent, confirm_session_booking_payment
+from talker.models import TalkerBalance
 
 User = get_user_model()
 
@@ -735,6 +739,83 @@ class SessionBookingViewSet(viewsets.ModelViewSet):
             },
             status=status.HTTP_400_BAD_REQUEST,
         )
+
+    @swagger_auto_schema(
+        operation_description='Reject a paid booking before it starts and refund the listener amount to the talker balance',
+        request_body=RejectSessionBookingSerializer,
+        responses={200: SessionBookingSerializer, 400: 'Bad request', 403: 'Forbidden', 404: 'Not found'},
+        tags=['Booking Purchase']
+    )
+    @action(detail=False, methods=['post'], url_path='reject')
+    def reject_booking(self, request):
+        if request.user.user_type != 'listener':
+            return Response({'error': 'Only listeners can reject bookings'}, status=status.HTTP_403_FORBIDDEN)
+
+        serializer = RejectSessionBookingSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        booking_id = serializer.validated_data['booking_id']
+        reason = serializer.validated_data['reason']
+        notes = serializer.validated_data.get('notes', '') or ''
+
+        try:
+            with transaction.atomic():
+                booking = SessionBooking.objects.select_for_update().select_related('talker', 'listener', 'package').get(
+                    id=booking_id,
+                    listener=request.user,
+                )
+
+                if booking.status != 'completed' or booking.payment_completed_at is None:
+                    return Response(
+                        {'error': 'Only paid bookings can be rejected'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                if booking.start_datetime_aware <= timezone.now():
+                    return Response(
+                        {'error': 'You can only reject a booking before it starts'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                if booking.status == 'cancelled':
+                    return Response(
+                        {'error': 'This booking has already been rejected or cancelled'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                talker_balance, _ = TalkerBalance.objects.select_for_update().get_or_create(
+                    talker=booking.talker,
+                    defaults={'available_balance': Decimal('0.00'), 'total_earned': Decimal('0.00')},
+                )
+
+                refund_amount = booking.listener_amount
+                talker_balance.add_earnings(refund_amount)
+
+                booking.status = 'cancelled'
+                booking.cancellation_reason = f'Rejected by listener: {reason}. {notes}'.strip()
+                booking.save(update_fields=['status', 'cancellation_reason', 'updated_at'])
+
+                return Response(
+                    {
+                        'message': 'Booking rejected successfully and refunded to talker balance.',
+                        'booking': SessionBookingSerializer(booking).data,
+                        'refund': {
+                            'amount': str(refund_amount),
+                            'credited_to': booking.talker.email,
+                            'talker_balance': {
+                                'available_balance': str(talker_balance.available_balance),
+                                'total_earned': str(talker_balance.total_earned),
+                            },
+                        },
+                    },
+                    status=status.HTTP_200_OK,
+                )
+
+        except SessionBooking.DoesNotExist:
+            return Response(
+                {'error': 'Booking not found for this listener'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
 
     @swagger_auto_schema(
         operation_description='Check if a listener slot is available for selected date/time/package',

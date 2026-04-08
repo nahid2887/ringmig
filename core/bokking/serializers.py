@@ -237,3 +237,11 @@ class ConfirmSessionBookingPaymentSerializer(serializers.Serializer):
 
     booking_id = serializers.UUIDField()
     payment_intent_id = serializers.CharField()
+
+
+class RejectSessionBookingSerializer(serializers.Serializer):
+    """Input serializer for listener booking rejection."""
+
+    booking_id = serializers.UUIDField()
+    reason = serializers.CharField(max_length=255)
+    notes = serializers.CharField(required=False, allow_blank=True, allow_null=True)

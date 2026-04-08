@@ -8,9 +8,11 @@ from drf_yasg import openapi
 from django.shortcuts import get_object_or_404
 from .models import TalkerProfile, FavoriteListener
 from .serializers import (TalkerProfileSerializer, FavoriteListenerSerializer, AddFavoriteListenerSerializer,
-                          TalkerCallHistorySerializer, TalkerCallHistoryDetailSerializer)
+                          TalkerCallHistorySerializer, TalkerCallHistoryDetailSerializer,
+                          TalkerBalanceSerializer)
 from listener.models import ListenerProfile, ListenerRating, ListenerBlockedTalker
 from listener.serializers import ListenerListSerializer, ListenerRatingSerializer, ListenerReviewDisplaySerializer
+from .models import TalkerBalance
 
 
 class IsTalkerUser(IsAuthenticated):
@@ -281,6 +283,62 @@ class TalkerProfileViewSet(viewsets.ModelViewSet):
         
         serializer = ListenerListSerializer(listener, context={'request': request})
         return Response(serializer.data)
+
+
+class TalkerBalanceViewSet(viewsets.ReadOnlyModelViewSet):
+    """ViewSet for viewing talker balance (read-only)."""
+
+    permission_classes = [IsTalkerUser]
+    serializer_class = TalkerBalanceSerializer
+
+    def get_queryset(self):
+        if getattr(self, 'swagger_fake_view', False) or self.request is None:
+            return TalkerBalance.objects.none()
+
+        user = self.request.user
+        if user.user_type == 'talker':
+            return TalkerBalance.objects.filter(talker=user)
+        return TalkerBalance.objects.none()
+
+    @swagger_auto_schema(
+        operation_description="Get current talker balance",
+        responses={200: TalkerBalanceSerializer},
+        tags=['Talker Balance']
+    )
+    @action(detail=False, methods=['get'], url_path='my-balance')
+    def my_balance(self, request):
+        """Get current user's talker balance."""
+        user = request.user
+
+        if user.user_type != 'talker':
+            return Response(
+                {'error': 'Only talkers can view balance'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        balance, created = TalkerBalance.objects.get_or_create(
+            talker=user,
+            defaults={'available_balance': 0, 'total_earned': 0}
+        )
+
+        from django.db.models import Sum
+        from bokking.models import SessionBooking
+
+        rejected_booking_earnings = SessionBooking.objects.filter(
+            talker=user,
+            status='cancelled',
+            cancellation_reason__icontains='Rejected by listener',
+        ).aggregate(total=Sum('listener_amount'))['total'] or 0
+
+        return Response({
+            'available_balance': str(balance.available_balance),
+            'total_earned': str(balance.total_earned),
+            'last_updated': balance.updated_at,
+            'debug_info': {
+                'rejected_booking_earnings': str(rejected_booking_earnings),
+                'balance_created_now': created,
+            }
+        })
     
     @swagger_auto_schema(
         operation_description="Get detailed information about an available listener",

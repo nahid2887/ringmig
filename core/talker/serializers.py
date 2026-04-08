@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import TalkerProfile, FavoriteListener, TalkerReport, TalkerSuspension
+from .models import TalkerProfile, FavoriteListener, TalkerReport, TalkerSuspension, TalkerBalance
 from listener.models import ListenerProfile
 
 
@@ -62,6 +62,24 @@ class TalkerSuspensionSerializer(serializers.ModelSerializer):
     def get_remaining_days(self, obj):
         """Get remaining suspension days."""
         return obj.get_remaining_days()
+
+
+class TalkerBalanceSerializer(serializers.ModelSerializer):
+    """Serializer for read-only talker balance details."""
+
+    talker_email = serializers.CharField(source='talker.email', read_only=True)
+
+    class Meta:
+        model = TalkerBalance
+        fields = [
+            'id',
+            'talker_email',
+            'available_balance',
+            'total_earned',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = fields
 
 class TalkerCallHistorySerializer(serializers.Serializer):
     """Serializer for talker call history (CallSession)."""
@@ -143,6 +161,14 @@ class TalkerCallHistoryDetailSerializer(serializers.Serializer):
         if obj.listener:
             return obj.listener.full_name or obj.listener.email
         return None
+
+
+class RejectSessionBookingSerializer(serializers.Serializer):
+    """Input serializer for listener booking rejection."""
+
+    booking_id = serializers.UUIDField()
+    reason = serializers.CharField(max_length=255)
+    notes = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     
     def get_duration_in_minutes(self, obj):
         """Calculate actual call duration."""

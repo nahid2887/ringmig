@@ -3,6 +3,7 @@ from django.contrib.auth import get_user_model
 from django.utils.translation import gettext_lazy as _
 from django.utils import timezone
 from datetime import timedelta
+from decimal import Decimal
 
 User = get_user_model()
 
@@ -201,4 +202,55 @@ class TalkerSuspension(models.Model):
         remaining = self.resume_at - timezone.now()
         days = remaining.days + (1 if remaining.seconds > 0 else 0)
         return max(0, days)
+
+
+class TalkerBalance(models.Model):
+    """Single table to maintain talker's balance."""
+
+    talker = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name='talker_balance_account',
+        limit_choices_to={'user_type': 'talker'}
+    )
+
+    available_balance = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text=_('Current available balance')
+    )
+
+    total_earned = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text=_('Total money earned (lifetime)')
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = _('Talker Balance')
+        verbose_name_plural = _('Talker Balances')
+
+    def __str__(self):
+        return f"{self.talker.email}: ${self.available_balance}"
+
+    def add_earnings(self, amount):
+        """Add money to balance."""
+        amount = Decimal(str(amount))
+        self.available_balance += amount
+        self.total_earned += amount
+        self.save(update_fields=['available_balance', 'total_earned', 'updated_at'])
+
+    def deduct(self, amount):
+        """Deduct money from balance."""
+        amount = Decimal(str(amount))
+        if self.available_balance >= amount:
+            self.available_balance -= amount
+            self.save(update_fields=['available_balance', 'updated_at'])
+            return True
+        return False
 

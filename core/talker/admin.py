@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import TalkerProfile, FavoriteListener
+from .models import TalkerProfile, FavoriteListener, TalkerBalance
 
 @admin.register(TalkerProfile)
 class TalkerProfileAdmin(admin.ModelAdmin):
@@ -17,3 +17,11 @@ class FavoriteListenerAdmin(admin.ModelAdmin):
     search_fields = ['talker__email', 'listener__user__email']
     list_filter = ['added_at']
     readonly_fields = ['added_at']
+
+
+@admin.register(TalkerBalance)
+class TalkerBalanceAdmin(admin.ModelAdmin):
+    list_display = ['talker', 'available_balance', 'total_earned', 'updated_at']
+    search_fields = ['talker__email']
+    readonly_fields = ['total_earned', 'created_at', 'updated_at']
+    ordering = ['-available_balance']
