@@ -76,6 +76,7 @@ class TalkerBalanceSerializer(serializers.ModelSerializer):
             'talker_email',
             'available_balance',
             'total_earned',
+            'total_refunded',
             'created_at',
             'updated_at',
         ]

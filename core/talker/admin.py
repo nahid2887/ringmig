@@ -21,7 +21,7 @@ class FavoriteListenerAdmin(admin.ModelAdmin):
 
 @admin.register(TalkerBalance)
 class TalkerBalanceAdmin(admin.ModelAdmin):
-    list_display = ['talker', 'available_balance', 'total_earned', 'updated_at']
+    list_display = ['talker', 'available_balance', 'total_earned', 'total_refunded', 'updated_at']
     search_fields = ['talker__email']
-    readonly_fields = ['total_earned', 'created_at', 'updated_at']
+    readonly_fields = ['total_earned', 'total_refunded', 'created_at', 'updated_at']
     ordering = ['-available_balance']

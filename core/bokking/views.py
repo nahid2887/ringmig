@@ -26,6 +26,7 @@ from .serializers import (
 )
 from .booking_payments import create_session_booking_payment_intent, confirm_session_booking_payment
 from talker.models import TalkerBalance
+from listener.models import ListenerBalance
 
 User = get_user_model()
 
@@ -601,6 +602,67 @@ class SessionBookingViewSet(viewsets.ModelViewSet):
         return SessionBooking.objects.none()
 
     @swagger_auto_schema(
+        operation_description='Delete a booking. If payment was completed, refund listener amount to talker balance. If listener earnings were already released, reverse them from listener balance.',
+        responses={200: 'Booking deleted with refund details', 204: 'Booking deleted', 403: 'Forbidden', 404: 'Not found'},
+        tags=['Booking Purchase']
+    )
+    def destroy(self, request, *args, **kwargs):
+        booking = self.get_object()
+
+        with transaction.atomic():
+            booking = SessionBooking.objects.select_for_update().select_related('talker', 'listener').get(id=booking.id)
+
+            refund_amount = Decimal('0.00')
+            listener_reversed = Decimal('0.00')
+            talker_balance = None
+
+            if booking.payment_completed_at is not None:
+                refund_amount = booking.listener_amount
+
+                talker_balance, _ = TalkerBalance.objects.select_for_update().get_or_create(
+                    talker=booking.talker,
+                    defaults={
+                        'available_balance': Decimal('0.00'),
+                        'total_earned': Decimal('0.00'),
+                        'total_refunded': Decimal('0.00'),
+                    },
+                )
+                talker_balance.add_refund_credit(refund_amount)
+
+                # If this booking already credited listener earnings, reverse that credit.
+                if booking.listener_earnings_released:
+                    listener_balance, _ = ListenerBalance.objects.select_for_update().get_or_create(
+                        listener=booking.listener,
+                        defaults={'available_balance': Decimal('0.00'), 'total_earned': Decimal('0.00')},
+                    )
+                    if listener_balance.deduct(refund_amount):
+                        listener_reversed = refund_amount
+
+            listener = booking.listener
+            booking_id = str(booking.id)
+            booking.delete()
+
+        if hasattr(listener, 'booking_availability'):
+            broadcast_availability_update(listener.booking_availability)
+
+        return Response(
+            {
+                'message': 'Booking deleted successfully.',
+                'booking_id': booking_id,
+                'refund': {
+                    'amount_credited_to_talker_balance': str(refund_amount),
+                    'talker_balance': {
+                        'available_balance': str(talker_balance.available_balance) if talker_balance else '0.00',
+                        'total_earned': str(talker_balance.total_earned) if talker_balance else '0.00',
+                        'total_refunded': str(talker_balance.total_refunded) if talker_balance else '0.00',
+                    },
+                    'listener_balance_reversed': str(listener_reversed),
+                },
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    @swagger_auto_schema(
         operation_description='Purchase a booking slot with Stripe payment link',
         request_body=PurchaseSessionBookingSerializer,
         responses={201: SessionBookingSerializer, 400: 'Bad request'},
@@ -785,11 +847,15 @@ class SessionBookingViewSet(viewsets.ModelViewSet):
 
                 talker_balance, _ = TalkerBalance.objects.select_for_update().get_or_create(
                     talker=booking.talker,
-                    defaults={'available_balance': Decimal('0.00'), 'total_earned': Decimal('0.00')},
+                    defaults={
+                        'available_balance': Decimal('0.00'),
+                        'total_earned': Decimal('0.00'),
+                        'total_refunded': Decimal('0.00'),
+                    },
                 )
 
                 refund_amount = booking.listener_amount
-                talker_balance.add_earnings(refund_amount)
+                talker_balance.add_refund_credit(refund_amount)
 
                 booking.status = 'cancelled'
                 booking.cancellation_reason = f'Rejected by listener: {reason}. {notes}'.strip()
@@ -805,6 +871,7 @@ class SessionBookingViewSet(viewsets.ModelViewSet):
                             'talker_balance': {
                                 'available_balance': str(talker_balance.available_balance),
                                 'total_earned': str(talker_balance.total_earned),
+                                'total_refunded': str(talker_balance.total_refunded),
                             },
                         },
                     },

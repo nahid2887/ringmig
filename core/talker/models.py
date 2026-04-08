@@ -228,6 +228,13 @@ class TalkerBalance(models.Model):
         help_text=_('Total money earned (lifetime)')
     )
 
+    total_refunded = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text=_('Total refunded credits received from rejected/deleted bookings')
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -244,6 +251,13 @@ class TalkerBalance(models.Model):
         self.available_balance += amount
         self.total_earned += amount
         self.save(update_fields=['available_balance', 'total_earned', 'updated_at'])
+
+    def add_refund_credit(self, amount):
+        """Add refund credit to balance without treating it as earned income."""
+        amount = Decimal(str(amount))
+        self.available_balance += amount
+        self.total_refunded += amount
+        self.save(update_fields=['available_balance', 'total_refunded', 'updated_at'])
 
     def deduct(self, amount):
         """Deduct money from balance."""

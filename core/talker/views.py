@@ -318,7 +318,7 @@ class TalkerBalanceViewSet(viewsets.ReadOnlyModelViewSet):
 
         balance, created = TalkerBalance.objects.get_or_create(
             talker=user,
-            defaults={'available_balance': 0, 'total_earned': 0}
+            defaults={'available_balance': 0, 'total_earned': 0, 'total_refunded': 0}
         )
 
         from django.db.models import Sum
@@ -333,6 +333,7 @@ class TalkerBalanceViewSet(viewsets.ReadOnlyModelViewSet):
         return Response({
             'available_balance': str(balance.available_balance),
             'total_earned': str(balance.total_earned),
+            'total_refunded': str(balance.total_refunded),
             'last_updated': balance.updated_at,
             'debug_info': {
                 'rejected_booking_earnings': str(rejected_booking_earnings),
