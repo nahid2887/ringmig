@@ -537,6 +537,7 @@ class ListenerBalanceViewSet(viewsets.ReadOnlyModelViewSet):
         # For debugging - also get payout data for comparison
         from django.db.models import Sum
         from chat.call_models import ListenerPayout, CallPackage
+        from bokking.models import SessionBooking
         
         # Calculate what balance should be based on payout data
         earned_payouts = ListenerPayout.objects.filter(
@@ -566,8 +567,14 @@ class ListenerBalanceViewSet(viewsets.ReadOnlyModelViewSet):
             status='processing',
             is_extension=False
         ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+
+        released_booking_earnings = SessionBooking.objects.filter(
+            listener=user,
+            status='completed',
+            listener_earnings_released=True,
+        ).aggregate(total=Sum('listener_amount'))['total'] or Decimal('0.00')
         
-        calculated_balance = earned_payouts + extension_earnings - completed_withdrawals
+        calculated_balance = earned_payouts + extension_earnings + released_booking_earnings - completed_withdrawals
         
         return Response({
             'available_balance': str(balance.available_balance),
@@ -581,6 +588,7 @@ class ListenerBalanceViewSet(viewsets.ReadOnlyModelViewSet):
                 'completed_withdrawals': str(completed_withdrawals),
                 'pending_withdrawals': str(pending_withdrawals),
                 'processing_payouts': str(processing_payouts),
+                'released_session_booking_earnings': str(released_booking_earnings),
                 'calculated_balance': str(calculated_balance),
                 'balance_difference': str(balance.available_balance - calculated_balance),
                 'balance_created_now': created

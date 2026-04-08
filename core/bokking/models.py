@@ -5,7 +5,7 @@ import uuid
 from django.contrib.auth import get_user_model
 from django.core.mail import send_mail
 from django.core.validators import MaxValueValidator, MinValueValidator
-from django.db import models
+from django.db import models, transaction
 from django.conf import settings
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
@@ -271,6 +271,15 @@ class SessionBooking(models.Model):
         blank=True,
         help_text='When 20-minute reminder email was sent to listener'
     )
+    listener_earnings_released = models.BooleanField(
+        default=False,
+        help_text='Whether listener earnings were added to available balance after session end'
+    )
+    listener_earnings_released_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text='When listener earnings were released to balance'
+    )
 
     class Meta:
         verbose_name = 'Session Booking'
@@ -318,6 +327,43 @@ class SessionBooking(models.Model):
 
     def _build_reminder_subject(self):
         return 'Reminder: Your session starts in 20 minutes'
+
+    def release_listener_earnings_if_due(self):
+        """
+        Release listener earnings to ListenerBalance exactly once after meeting end.
+        Returns True if earnings were released in this call, else False.
+        """
+        from listener.models import ListenerBalance
+
+        now = timezone.now()
+        meeting_end = timezone.make_aware(
+            datetime.combine(self.booking_date, self.end_time),
+            timezone.get_current_timezone(),
+        )
+
+        if self.listener_earnings_released:
+            return False
+        if self.status != 'completed' or not self.payment_completed_at:
+            return False
+        if now < meeting_end:
+            return False
+
+        with transaction.atomic():
+            locked_booking = SessionBooking.objects.select_for_update().select_related('listener').get(id=self.id)
+            if locked_booking.listener_earnings_released:
+                return False
+
+            balance, _ = ListenerBalance.objects.select_for_update().get_or_create(
+                listener=locked_booking.listener,
+                defaults={'available_balance': Decimal('0.00'), 'total_earned': Decimal('0.00')},
+            )
+            balance.add_earnings(locked_booking.listener_amount)
+
+            locked_booking.listener_earnings_released = True
+            locked_booking.listener_earnings_released_at = now
+            locked_booking.save(update_fields=['listener_earnings_released', 'listener_earnings_released_at', 'updated_at'])
+
+        return True
 
     def _build_reminder_message(self, recipient_role):
         listener_name = self.listener.full_name or self.listener.email
@@ -447,6 +493,39 @@ class SessionBooking(models.Model):
                 if booking.talker_reminder_sent_at or booking.listener_reminder_sent_at:
                     booking.save(update_fields=['talker_reminder_sent_at', 'listener_reminder_sent_at', 'updated_at'])
 
+            except Exception:
+                stats['failed'] += 1
+
+        return stats
+
+    @classmethod
+    def release_ended_listener_earnings(cls):
+        """Release earnings for completed bookings whose end time has passed."""
+        now = timezone.now()
+        candidate_bookings = cls.objects.filter(
+            status='completed',
+            payment_completed_at__isnull=False,
+            listener_earnings_released=False,
+        ).select_related('listener')
+
+        stats = {
+            'processed': 0,
+            'released': 0,
+            'failed': 0,
+        }
+
+        for booking in candidate_bookings:
+            meeting_end = timezone.make_aware(
+                datetime.combine(booking.booking_date, booking.end_time),
+                timezone.get_current_timezone(),
+            )
+            if now < meeting_end:
+                continue
+
+            stats['processed'] += 1
+            try:
+                if booking.release_listener_earnings_if_due():
+                    stats['released'] += 1
             except Exception:
                 stats['failed'] += 1
 

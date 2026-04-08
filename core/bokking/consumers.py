@@ -1093,12 +1093,21 @@ class UserBookingListConsumer(AsyncWebsocketConsumer):
         if booking_id in self.sent_end_booking_ids:
             return
 
+        await self.release_booking_listener_earnings(booking_id)
+
         payload = await self.build_booking_end_payload(booking_id)
         if payload is None:
             return
 
         self.sent_end_booking_ids.add(booking_id)
         await self.send_json(payload)
+
+    @database_sync_to_async
+    def release_booking_listener_earnings(self, booking_id):
+        booking = SessionBooking.objects.filter(id=booking_id).first()
+        if not booking:
+            return False
+        return booking.release_listener_earnings_if_due()
 
     async def _monitor_upcoming_booking_changes(self):
         try:

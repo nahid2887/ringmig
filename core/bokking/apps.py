@@ -11,7 +11,7 @@ _booking_reminder_scheduler_started = False
 
 
 def _booking_reminder_scheduler_loop(interval_seconds=60):
-    """Run booking reminder checks inside the active server process."""
+    """Run booking reminder and earnings-release checks inside the active server process."""
     from bokking.models import SessionBooking
 
     while True:
@@ -24,6 +24,15 @@ def _booking_reminder_scheduler_loop(interval_seconds=60):
                     stats.get('talker_sent'),
                     stats.get('listener_sent'),
                     stats.get('failed'),
+                )
+
+            earnings_stats = SessionBooking.release_ended_listener_earnings()
+            if earnings_stats.get('processed') or earnings_stats.get('released') or earnings_stats.get('failed'):
+                logger.info(
+                    'Booking earnings tick: processed=%s released=%s failed=%s',
+                    earnings_stats.get('processed'),
+                    earnings_stats.get('released'),
+                    earnings_stats.get('failed'),
                 )
         except Exception as exc:
             logger.exception('Booking reminder scheduler failed: %s', exc)
