@@ -612,6 +612,16 @@ class SessionBookingViewSet(viewsets.ModelViewSet):
         with transaction.atomic():
             booking = SessionBooking.objects.select_for_update().select_related('talker', 'listener').get(id=booking.id)
 
+            if timezone.now() >= booking.start_datetime_aware:
+                return Response(
+                    {
+                        'error': 'Booking cannot be deleted after the meeting has started. Delete is allowed only before start time.',
+                        'booking_id': str(booking.id),
+                        'start_time': booking.start_datetime_aware.isoformat(),
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
             refund_amount = Decimal('0.00')
             listener_reversed = Decimal('0.00')
             talker_balance = None

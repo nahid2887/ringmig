@@ -284,6 +284,72 @@ class TalkerProfileViewSet(viewsets.ModelViewSet):
         serializer = ListenerListSerializer(listener, context={'request': request})
         return Response(serializer.data)
 
+    def listener_detail_by_id(self, request, listener_id=None):
+        """Get detailed information about a specific listener by user ID.
+
+        URL: /api/talker/profiles/all_listeners/<user_id>/
+        """
+        if not request.user.is_authenticated or request.user.user_type != 'talker':
+            return Response(
+                {'error': 'Only authenticated talkers can view listener details'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        is_blocked = ListenerBlockedTalker.objects.filter(
+            listener_id=listener_id,
+            talker=request.user
+        ).exists()
+
+        if is_blocked:
+            return Response(
+                {'error': 'This listener has blocked you and is not available'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        try:
+            listener = ListenerProfile.objects.get(user_id=listener_id)
+        except ListenerProfile.DoesNotExist:
+            return Response(
+                {'error': f'Listener with user ID {listener_id} not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        serializer = ListenerListSerializer(listener, context={'request': request})
+        return Response(serializer.data)
+
+    def available_listener_detail(self, request, listener_id=None):
+        """Get detailed information about an available listener by user ID.
+
+        URL: /api/talker/profiles/available_listeners/<user_id>/
+        """
+        if not request.user.is_authenticated or request.user.user_type != 'talker':
+            return Response(
+                {'error': 'Only authenticated talkers can view listener details'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        is_blocked = ListenerBlockedTalker.objects.filter(
+            listener_id=listener_id,
+            talker=request.user
+        ).exists()
+
+        if is_blocked:
+            return Response(
+                {'error': 'This listener has blocked you and is not available'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        try:
+            listener = ListenerProfile.objects.get(user_id=listener_id, is_available=True)
+        except ListenerProfile.DoesNotExist:
+            return Response(
+                {'error': f'Available listener with user ID {listener_id} not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        serializer = ListenerListSerializer(listener, context={'request': request})
+        return Response(serializer.data)
+
 
 class TalkerBalanceViewSet(viewsets.ReadOnlyModelViewSet):
     """ViewSet for viewing talker balance (read-only)."""

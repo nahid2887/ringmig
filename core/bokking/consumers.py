@@ -1244,6 +1244,18 @@ class UserBookingListConsumer(AsyncWebsocketConsumer):
         session_data = CallSessionSerializer(session).data
         session_data['call_type'] = session.call_type
 
+        now = timezone.now()
+        upcoming_qs = SessionBooking.objects.select_related('talker', 'listener', 'package').filter(
+            Q(talker=self.user) | Q(listener=self.user),
+            status='completed',
+            booking_date__gte=now.date(),
+        ).order_by('booking_date', 'start_time')[:200]
+
+        upcoming_bookings = []
+        for upcoming in upcoming_qs:
+            if upcoming.start_datetime_aware >= now:
+                upcoming_bookings.append(self._serialize_booking(upcoming))
+
         return {
             'type': 'booking_session_ready',
             'message': 'Meeting time started. Join call now.',
@@ -1268,6 +1280,12 @@ class UserBookingListConsumer(AsyncWebsocketConsumer):
                 },
                 'expires_at': zim_tokens['expires_at'],
                 'expire_time_seconds': zim_tokens['expire_time_seconds'],
+            },
+            'upcoming_bookings': {
+                'type': 'upcoming_bookings',
+                'message': 'Your upcoming booking list',
+                'count': len(upcoming_bookings),
+                'data': upcoming_bookings,
             },
         }
 
@@ -1309,6 +1327,17 @@ class UserBookingListConsumer(AsyncWebsocketConsumer):
         if session_data and session:
             session_data['call_type'] = session.call_type
 
+        upcoming_qs = SessionBooking.objects.select_related('talker', 'listener', 'package').filter(
+            Q(talker=self.user) | Q(listener=self.user),
+            status='completed',
+            booking_date__gte=now.date(),
+        ).order_by('booking_date', 'start_time')[:200]
+
+        upcoming_bookings = []
+        for upcoming in upcoming_qs:
+            if upcoming.start_datetime_aware >= now:
+                upcoming_bookings.append(self._serialize_booking(upcoming))
+
         return {
             'type': 'booking_session_ended',
             'message': 'Meeting time ended.',
@@ -1316,6 +1345,12 @@ class UserBookingListConsumer(AsyncWebsocketConsumer):
             'meeting': session_data,
             'ended_at': now.isoformat(),
             'reason': 'booking_time_expired',
+            'upcoming_bookings': {
+                'type': 'upcoming_bookings',
+                'message': 'Your upcoming booking list',
+                'count': len(upcoming_bookings),
+                'data': upcoming_bookings,
+            },
         }
 
     @database_sync_to_async
