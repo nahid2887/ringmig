@@ -1259,6 +1259,8 @@ class UserBookingListConsumer(AsyncWebsocketConsumer):
         return {
             'type': 'booking_session_ready',
             'message': 'Meeting time started. Join call now.',
+            'start_time': booking.start_time.strftime('%H:%M:%S'),
+            'end_time': booking.end_time.strftime('%H:%M:%S'),
             'booking': self._serialize_booking(booking),
             'running_booking': {
                 **self._serialize_booking(booking),
@@ -1341,6 +1343,8 @@ class UserBookingListConsumer(AsyncWebsocketConsumer):
         return {
             'type': 'booking_session_ended',
             'message': 'Meeting time ended.',
+            'start_time': booking.start_time.strftime('%H:%M:%S'),
+            'end_time': booking.end_time.strftime('%H:%M:%S'),
             'booking': self._serialize_booking(booking),
             'meeting': session_data,
             'ended_at': now.isoformat(),
