@@ -29,6 +29,7 @@ psycopg2-binary==2.9.11
 pyasn1==0.6.2
 pyasn1_modules==0.4.2
 pycparser==3.0
+pycryptodome==3.23.0
 PyJWT==2.11.0
 pyOpenSSL==25.3.0
 python-dotenv==1.1.1
@@ -46,5 +47,6 @@ typing_extensions==4.15.0
 tzdata==2025.3
 uritemplate==4.2.0
 urllib3==2.6.3
+websocket-client==1.9.0
 whitenoise==6.9.0
 zope.interface==8.2

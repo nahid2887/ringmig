@@ -1,14 +1,19 @@
 import json
 import base64
+import asyncio
+from datetime import timedelta
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
+from django.db.models import Q
 from django.contrib.auth import get_user_model
 from django.core.files.base import ContentFile
+from django.utils import timezone
 from rest_framework_simplejwt.tokens import AccessToken
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from .models import Conversation, Message, FileAttachment
 from .serializers import MessageSerializer
 from listener.models import ListenerBlockedTalker
+from bokking.models import SessionBooking
 
 User = get_user_model()
 
@@ -492,9 +497,14 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
 class NotificationConsumer(AsyncWebsocketConsumer):
     """WebSocket consumer for real-time notifications."""
+
+    BOOKING_REMINDER_CHECK_INTERVAL_SECONDS = 30
     
     async def connect(self):
         """Handle WebSocket connection for notifications."""
+        self.booking_reminder_task = None
+        self.sent_booking_reminders = set()
+
         # Authenticate user
         self.user = await self.get_user_from_token()
         if not self.user:
@@ -528,9 +538,19 @@ class NotificationConsumer(AsyncWebsocketConsumer):
                     'count': len(pending_conversations),
                     'message': f"You have {len(pending_conversations)} pending conversation(s)"
                 }))
+
+        # Start background checker for 20-minute booking reminders.
+        self.booking_reminder_task = asyncio.create_task(self._booking_reminder_loop())
     
     async def disconnect(self, close_code):
         """Handle WebSocket disconnection."""
+        if self.booking_reminder_task:
+            self.booking_reminder_task.cancel()
+            try:
+                await self.booking_reminder_task
+            except asyncio.CancelledError:
+                pass
+
         # Leave notification group
         if hasattr(self, 'notification_group_name'):
             await self.channel_layer.group_discard(
@@ -629,6 +649,42 @@ class NotificationConsumer(AsyncWebsocketConsumer):
             'message': event.get('message'),
             'timestamp': event.get('timestamp'),
         }))
+
+    async def _booking_reminder_loop(self):
+        """Poll upcoming bookings and notify exactly 20 minutes before start."""
+        try:
+            while True:
+                await self._send_due_booking_reminders()
+                await asyncio.sleep(self.BOOKING_REMINDER_CHECK_INTERVAL_SECONDS)
+        except asyncio.CancelledError:
+            return
+
+    async def _send_due_booking_reminders(self):
+        now = timezone.now()
+        window_start = now + timedelta(minutes=20)
+        window_end = window_start + timedelta(seconds=self.BOOKING_REMINDER_CHECK_INTERVAL_SECONDS)
+
+        due_reminders = await self.get_bookings_in_reminder_window(window_start, window_end)
+        for reminder in due_reminders:
+            reminder_key = f"{reminder['booking_id']}:{reminder['recipient_role']}"
+            if reminder_key in self.sent_booking_reminders:
+                continue
+
+            self.sent_booking_reminders.add(reminder_key)
+            await self.send(text_data=json.dumps({
+                'type': 'booking_reminder_notification',
+                'booking_id': reminder['booking_id'],
+                'session_id': None,
+                'recipient_role': reminder['recipient_role'],
+                'booking_date': reminder['booking_date'],
+                'start_time': reminder['start_time'],
+                'end_time': reminder['end_time'],
+                'duration_minutes': reminder['duration_minutes'],
+                'talker': reminder['talker'],
+                'listener': reminder['listener'],
+                'message': 'Your meeting starts in 20 minutes',
+                'timestamp': now.isoformat(),
+            }))
     
     # Database operations
     @database_sync_to_async
@@ -670,6 +726,47 @@ class NotificationConsumer(AsyncWebsocketConsumer):
                 'created_at': conv.created_at.isoformat()
             })
         return result
+
+    @database_sync_to_async
+    def get_bookings_in_reminder_window(self, window_start, window_end):
+        """Return user's bookings that start within [window_start, window_end)."""
+        qs = SessionBooking.objects.select_related('talker', 'listener').filter(
+            Q(talker=self.user) | Q(listener=self.user),
+            status='completed',
+            booking_date__gte=timezone.localdate(),
+        ).only(
+            'id', 'talker_id', 'listener_id', 'booking_date', 'start_time', 'end_time',
+            'duration_minutes', 'talker__id', 'talker__email', 'talker__full_name',
+            'listener__id', 'listener__email', 'listener__full_name',
+        )
+
+        results = []
+        for booking in qs:
+            start_dt = booking.start_datetime_aware
+            if not (window_start <= start_dt < window_end):
+                continue
+
+            recipient_role = 'talker' if booking.talker_id == self.user.id else 'listener'
+            results.append({
+                'booking_id': str(booking.id),
+                'recipient_role': recipient_role,
+                'booking_date': booking.booking_date.isoformat(),
+                'start_time': booking.start_time.strftime('%H:%M:%S'),
+                'end_time': booking.end_time.strftime('%H:%M:%S'),
+                'duration_minutes': booking.duration_minutes,
+                'talker': {
+                    'id': booking.talker.id,
+                    'email': booking.talker.email,
+                    'full_name': booking.talker.full_name,
+                },
+                'listener': {
+                    'id': booking.listener.id,
+                    'email': booking.listener.email,
+                    'full_name': booking.listener.full_name,
+                },
+            })
+
+        return results
 
 
 class ConversationListConsumer(AsyncWebsocketConsumer):

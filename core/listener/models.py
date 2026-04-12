@@ -209,3 +209,37 @@ class ListenerBalance(models.Model):
             self.save(update_fields=['available_balance', 'updated_at'])
             return True
         return False
+
+
+class ListenerBookingRefund(models.Model):
+    """Tracks cumulative listener refunds for a booking to enforce max 100%."""
+
+    booking = models.OneToOneField(
+        'bokking.SessionBooking',
+        on_delete=models.CASCADE,
+        related_name='listener_refund_tracker'
+    )
+    listener = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='booking_refunds',
+        limit_choices_to={'user_type': 'listener'}
+    )
+    total_refunded = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text=_('Total amount refunded by listener for this booking')
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = _('Listener Booking Refund')
+        verbose_name_plural = _('Listener Booking Refunds')
+        indexes = [
+            models.Index(fields=['listener', 'updated_at']),
+        ]
+
+    def __str__(self):
+        return f"{self.listener.email} refunded ${self.total_refunded} for booking {self.booking_id}"

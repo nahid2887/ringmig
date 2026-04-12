@@ -1587,8 +1587,8 @@ class TipViewSet(viewsets.ModelViewSet):
                     'quantity': 1,
                 }],
                 mode='payment',
-                success_url=f"{getattr(settings, 'FRONTEND_URL', 'http://localhost:3000')}/payment/success?session_id={{CHECKOUT_SESSION_ID}}",
-                cancel_url=f"{getattr(settings, 'FRONTEND_URL', 'http://localhost:3000')}/payment/cancel",
+                success_url=f"{getattr(settings, 'FRONTEND_URL2', 'http://localhost:5174/dashboard/talker')}",
+                cancel_url=f"{getattr(settings, 'FRONTEND_URL', 'http://localhost:5174/dashboard/talker')}/payment/cancel?tip_id={tip.id}",
                 metadata={
                     'tip_id': tip.id,
                     'talker_id': request.user.id,

@@ -366,6 +366,10 @@ class TalkerBalanceViewSet(viewsets.ReadOnlyModelViewSet):
             return TalkerBalance.objects.filter(talker=user)
         return TalkerBalance.objects.none()
 
+    def list(self, request, *args, **kwargs):
+        """Make GET /api/talker/balance/ return the current talker balance payload."""
+        return self.my_balance(request)
+
     @swagger_auto_schema(
         operation_description="Get current talker balance",
         responses={200: TalkerBalanceSerializer},
@@ -393,7 +397,6 @@ class TalkerBalanceViewSet(viewsets.ReadOnlyModelViewSet):
         rejected_booking_earnings = SessionBooking.objects.filter(
             talker=user,
             status='cancelled',
-            cancellation_reason__icontains='Rejected by listener',
         ).aggregate(total=Sum('listener_amount'))['total'] or 0
 
         return Response({

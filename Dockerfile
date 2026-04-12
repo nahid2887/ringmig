@@ -27,5 +27,5 @@ COPY . .
 # Expose port
 EXPOSE 8005
 
-# Run migrations and start server
-CMD ["bash", "-c", "cd /app/core && python manage.py migrate && python manage.py runserver 0.0.0.0:8005"]
+# Run migrations and start Daphne ASGI server on container startup
+CMD ["bash", "-c", "cd /app/core && echo '[startup] running migrations...' && python manage.py migrate && echo '[startup] collecting static files...' && python manage.py collectstatic --noinput && echo '[startup] starting daphne on 0.0.0.0:8005' && exec python -m daphne -b 0.0.0.0 -p 8005 core.asgi:application"]

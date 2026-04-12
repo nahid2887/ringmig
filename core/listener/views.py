@@ -6,8 +6,9 @@ from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 from django.shortcuts import get_object_or_404
-from decimal import Decimal
-from .models import ListenerProfile, ListenerRating, ListenerBalance, ListenerBlockedTalker
+from django.db import transaction
+from decimal import Decimal, InvalidOperation
+from .models import ListenerProfile, ListenerRating, ListenerBalance, ListenerBlockedTalker, ListenerBookingRefund
 from .serializers import (ListenerProfileSerializer, ListenerListSerializer, ListenerRatingSerializer,
                          BlockTalkerSerializer, UnblockTalkerSerializer, BlockedTalkerListSerializer,
                          ListenerCallAttemptSerializer, ListenerCallAttemptDetailSerializer,
@@ -594,3 +595,175 @@ class ListenerBalanceViewSet(viewsets.ReadOnlyModelViewSet):
                 'balance_created_now': created
             }
         })
+
+    @action(detail=False, methods=['post'], url_path='refund-booking')
+    def refund_booking(self, request):
+        """
+        Refund booking earnings from listener balance back to talker balance.
+
+        Payload:
+        {
+            "booking_id": "<uuid>",
+            "amount": "10.00",            # optional
+            "refund_percent": "50"        # optional (0-100)
+        }
+
+        Rules:
+        - Only listener who owns the booking can refund.
+        - If neither amount nor refund_percent is provided, full listener_amount is refunded.
+        - Refund always deducts from listener available_balance.
+        - Refunded amount is credited to talker balance as refund credit.
+        """
+        if request.user.user_type != 'listener':
+            return Response(
+                {'error': 'Only listeners can refund booking earnings'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        booking_id = request.data.get('booking_id')
+        amount_raw = request.data.get('amount')
+        refund_percent_raw = request.data.get('refund_percent')
+
+        if not booking_id:
+            return Response({'error': 'booking_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if amount_raw is not None and refund_percent_raw is not None:
+            return Response(
+                {'error': 'Provide either amount or refund_percent, not both'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            from bokking.models import SessionBooking
+            from talker.models import TalkerBalance
+
+            with transaction.atomic():
+                booking = SessionBooking.objects.select_for_update().select_related('talker', 'listener').get(
+                    id=booking_id,
+                    listener=request.user,
+                )
+
+                refund_tracker, _ = ListenerBookingRefund.objects.select_for_update().get_or_create(
+                    booking=booking,
+                    defaults={'listener': request.user, 'total_refunded': Decimal('0.00')},
+                )
+
+                if booking.payment_completed_at is None:
+                    return Response(
+                        {'error': 'Booking is not paid, refund is not allowed'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                max_refundable = Decimal(str(booking.listener_amount))
+                if max_refundable <= 0:
+                    return Response(
+                        {'error': 'This booking has no refundable listener amount'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                already_refunded = Decimal(str(refund_tracker.total_refunded))
+                remaining_refundable = (max_refundable - already_refunded).quantize(Decimal('0.01'))
+
+                if remaining_refundable <= 0:
+                    return Response(
+                        {
+                            'error': 'This booking is already fully refunded (100%)',
+                            'max_refundable': str(max_refundable),
+                            'already_refunded': str(already_refunded),
+                            'remaining_refundable': '0.00',
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                # Determine refund amount.
+                if refund_percent_raw is not None:
+                    percent = Decimal(str(refund_percent_raw))
+                    if percent <= 0 or percent > 100:
+                        return Response(
+                            {'error': 'refund_percent must be greater than 0 and less than or equal to 100'},
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
+                    refund_amount = (max_refundable * percent / Decimal('100')).quantize(Decimal('0.01'))
+                elif amount_raw is not None:
+                    refund_amount = Decimal(str(amount_raw)).quantize(Decimal('0.01'))
+                else:
+                    refund_amount = max_refundable
+
+                if refund_amount <= 0:
+                    return Response(
+                        {'error': 'Refund amount must be greater than 0'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                if refund_amount > remaining_refundable:
+                    return Response(
+                        {
+                            'error': 'Refund amount exceeds remaining refundable amount for this booking',
+                            'max_refundable': str(max_refundable),
+                            'already_refunded': str(already_refunded),
+                            'remaining_refundable': str(remaining_refundable),
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                listener_balance, _ = ListenerBalance.objects.select_for_update().get_or_create(
+                    listener=request.user,
+                    defaults={'available_balance': Decimal('0.00'), 'total_earned': Decimal('0.00')},
+                )
+
+                if listener_balance.available_balance < refund_amount:
+                    return Response(
+                        {
+                            'error': 'Insufficient listener balance for refund',
+                            'available_balance': str(listener_balance.available_balance),
+                            'required_amount': str(refund_amount),
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                listener_balance.deduct(refund_amount)
+
+                talker_balance, _ = TalkerBalance.objects.select_for_update().get_or_create(
+                    talker=booking.talker,
+                    defaults={
+                        'available_balance': Decimal('0.00'),
+                        'total_earned': Decimal('0.00'),
+                        'total_refunded': Decimal('0.00'),
+                    },
+                )
+                talker_balance.add_refund_credit(refund_amount)
+
+                refund_tracker.total_refunded = (already_refunded + refund_amount).quantize(Decimal('0.01'))
+                refund_tracker.save(update_fields=['total_refunded', 'updated_at'])
+
+                return Response(
+                    {
+                        'message': 'Refund processed successfully',
+                        'booking_id': str(booking.id),
+                        'refund_amount': str(refund_amount),
+                        'already_refunded': str(refund_tracker.total_refunded),
+                        'remaining_refundable': str((max_refundable - refund_tracker.total_refunded).quantize(Decimal('0.01'))),
+                        'listener_balance': {
+                            'available_balance': str(listener_balance.available_balance),
+                            'total_earned': str(listener_balance.total_earned),
+                        },
+                        'talker_balance': {
+                            'talker_id': booking.talker.id,
+                            'available_balance': str(talker_balance.available_balance),
+                            'total_earned': str(talker_balance.total_earned),
+                            'total_refunded': str(talker_balance.total_refunded),
+                        },
+                    },
+                    status=status.HTTP_200_OK,
+                )
+
+        except (InvalidOperation, ValueError):
+            return Response(
+                {'error': 'Invalid amount/refund_percent format'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except SessionBooking.DoesNotExist:
+            return Response(
+                {'error': 'Booking not found for this listener'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
