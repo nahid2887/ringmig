@@ -10,7 +10,7 @@ from django.core.files.base import ContentFile
 from django.utils import timezone
 from rest_framework_simplejwt.tokens import AccessToken
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
-from .models import Conversation, Message, FileAttachment
+from .models import Conversation, Message, FileAttachment, Notification
 from .serializers import MessageSerializer
 from listener.models import ListenerBlockedTalker
 from bokking.models import SessionBooking
@@ -564,6 +564,17 @@ class NotificationConsumer(AsyncWebsocketConsumer):
     
     async def conversation_request(self, event):
         """Send conversation request notification to listener."""
+        await self._save_notification(
+            notification_type='pending_conversation',
+            title='New Conversation Request',
+            message=f"New conversation request from {event['talker_name']}",
+            data={
+                'conversation_id': event['conversation_id'],
+                'talker_id': event['talker_id'],
+                'talker_email': event['talker_email'],
+                'talker_name': event['talker_name'],
+            },
+        )
         await self.send(text_data=json.dumps({
             'type': 'conversation_request',
             'conversation_id': event['conversation_id'],
@@ -577,6 +588,17 @@ class NotificationConsumer(AsyncWebsocketConsumer):
     
     async def conversation_accepted(self, event):
         """Send conversation accepted notification to talker."""
+        await self._save_notification(
+            notification_type='general',
+            title='Conversation Accepted',
+            message=f"Your conversation request was accepted by {event['listener_name']}",
+            data={
+                'conversation_id': event['conversation_id'],
+                'listener_id': event['listener_id'],
+                'listener_email': event['listener_email'],
+                'listener_name': event['listener_name'],
+            },
+        )
         await self.send(text_data=json.dumps({
             'type': 'conversation_accepted',
             'conversation_id': event['conversation_id'],
@@ -589,6 +611,17 @@ class NotificationConsumer(AsyncWebsocketConsumer):
     
     async def conversation_rejected(self, event):
         """Send conversation rejected notification to talker."""
+        await self._save_notification(
+            notification_type='general',
+            title='Conversation Rejected',
+            message=f"Your conversation request was rejected by {event['listener_name']}",
+            data={
+                'conversation_id': event['conversation_id'],
+                'listener_id': event['listener_id'],
+                'listener_email': event['listener_email'],
+                'listener_name': event['listener_name'],
+            },
+        )
         await self.send(text_data=json.dumps({
             'type': 'conversation_rejected',
             'conversation_id': event['conversation_id'],
@@ -601,6 +634,17 @@ class NotificationConsumer(AsyncWebsocketConsumer):
     
     async def incoming_call(self, event):
         """Send incoming call notification to listener."""
+        await self._save_notification(
+            notification_type='call_started',
+            title='Incoming Call',
+            message=f"Incoming call from {event['talker_name']}",
+            data={
+                'session_id': event['session_id'],
+                'call_package_id': event['call_package_id'],
+                'call_type': event['call_type'],
+                'total_minutes': event['total_minutes'],
+            },
+        )
         await self.send(text_data=json.dumps({
             'type': 'incoming_call',
             'message': f"Incoming call from {event['talker_name']}",
@@ -619,6 +663,17 @@ class NotificationConsumer(AsyncWebsocketConsumer):
 
     async def call_ended_notification(self, event):
         """Send call ended notification to user."""
+        await self._save_notification(
+            notification_type='call_ended',
+            title='Call Ended',
+            message=event['message'],
+            data={
+                'session_id': event['session_id'],
+                'duration_minutes': event['duration_minutes'],
+                'ended_by': event['ended_by'],
+                'ended_by_name': event.get('ended_by_name'),
+            },
+        )
         await self.send(text_data=json.dumps({
             'type': 'call_ended',
             'message': event['message'],
@@ -631,10 +686,29 @@ class NotificationConsumer(AsyncWebsocketConsumer):
     
     async def call_ending_notification(self, event):
         """Send call ending notification to user (call time expired)."""
+        payload = event['data']
+        await self._save_notification(
+            notification_type='call_ended',
+            title='Call Ending',
+            message=payload.get('message', 'Call is ending'),
+            data=payload,
+        )
         await self.send(text_data=json.dumps(event['data']))
 
     async def booking_reminder_notification(self, event):
         """Send booking reminder notification to user."""
+        await self._save_notification(
+            notification_type='booking_reminder',
+            title='Booking Reminder',
+            message=event.get('message') or 'Your meeting starts soon',
+            data={
+                'booking_id': event.get('booking_id'),
+                'recipient_role': event.get('recipient_role'),
+                'booking_date': event.get('booking_date'),
+                'start_time': event.get('start_time'),
+                'end_time': event.get('end_time'),
+            },
+        )
         await self.send(text_data=json.dumps({
             'type': 'booking_reminder_notification',
             'booking_id': event.get('booking_id'),
@@ -652,6 +726,17 @@ class NotificationConsumer(AsyncWebsocketConsumer):
 
     async def booking_refund_notification(self, event):
         """Send booking refund notification to user."""
+        await self._save_notification(
+            notification_type='booking_refund',
+            title='Booking Refund',
+            message=event.get('message') or 'Booking refund processed',
+            data={
+                'booking_id': event.get('booking_id'),
+                'refund_amount': event.get('refund_amount'),
+                'listener_id': event.get('listener_id'),
+                'talker_id': event.get('talker_id'),
+            },
+        )
         await self.send(text_data=json.dumps({
             'type': 'booking_refund_notification',
             'booking_id': event.get('booking_id'),
@@ -664,6 +749,16 @@ class NotificationConsumer(AsyncWebsocketConsumer):
 
     async def booking_deleted_notification(self, event):
         """Send booking deleted notification to user."""
+        await self._save_notification(
+            notification_type='booking_deleted',
+            title='Booking Deleted',
+            message=event.get('message') or 'Booking was deleted',
+            data={
+                'booking_id': event.get('booking_id'),
+                'deleted_by_user_id': event.get('deleted_by_user_id'),
+                'refund_amount': event.get('refund_amount'),
+            },
+        )
         await self.send(text_data=json.dumps({
             'type': 'booking_deleted_notification',
             'booking_id': event.get('booking_id'),
@@ -694,6 +789,18 @@ class NotificationConsumer(AsyncWebsocketConsumer):
                 continue
 
             self.sent_booking_reminders.add(reminder_key)
+            await self._save_notification(
+                notification_type='booking_reminder',
+                title='Booking Reminder',
+                message='Your meeting starts in 20 minutes',
+                data={
+                    'booking_id': reminder['booking_id'],
+                    'recipient_role': reminder['recipient_role'],
+                    'booking_date': reminder['booking_date'],
+                    'start_time': reminder['start_time'],
+                    'end_time': reminder['end_time'],
+                },
+            )
             await self.send(text_data=json.dumps({
                 'type': 'booking_reminder_notification',
                 'booking_id': reminder['booking_id'],
@@ -710,6 +817,29 @@ class NotificationConsumer(AsyncWebsocketConsumer):
             }))
     
     # Database operations
+    @database_sync_to_async
+    def _save_notification(self, notification_type, title, message, data=None):
+        """Persist notification with lightweight duplicate protection."""
+        now = timezone.now()
+        dedup_window_start = now - timedelta(seconds=2)
+
+        if Notification.objects.filter(
+            user=self.user,
+            notification_type=notification_type,
+            title=title,
+            message=message,
+            created_at__gte=dedup_window_start,
+        ).exists():
+            return
+
+        Notification.objects.create(
+            user=self.user,
+            notification_type=notification_type,
+            title=title,
+            message=message,
+            data=data or {},
+        )
+
     @database_sync_to_async
     def get_user_from_token(self):
         """Authenticate user from JWT token."""

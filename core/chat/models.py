@@ -175,3 +175,41 @@ class FileAttachment(models.Model):
                 return f"{size:.1f} {unit}"
             size /= 1024.0
         return f"{size:.1f} TB"
+
+
+class Notification(models.Model):
+    """Persisted notification history for users."""
+
+    NOTIFICATION_TYPE_CHOICES = [
+        ('booking_refund', _('Booking Refund')),
+        ('booking_deleted', _('Booking Deleted')),
+        ('booking_reminder', _('Booking Reminder')),
+        ('pending_conversation', _('Pending Conversation')),
+        ('message_received', _('Message Received')),
+        ('call_started', _('Call Started')),
+        ('call_ended', _('Call Ended')),
+        ('listener_balance_added', _('Listener Balance Added')),
+        ('talker_payout_created', _('Talker Payout Created')),
+        ('payout_completed', _('Payout Completed')),
+        ('general', _('General Notification')),
+    ]
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='notifications')
+    notification_type = models.CharField(max_length=50, choices=NOTIFICATION_TYPE_CHOICES, default='general')
+    title = models.CharField(max_length=255, help_text='Notification title')
+    message = models.TextField(help_text='Notification message')
+    data = models.JSONField(default=dict, blank=True, help_text='Additional data in JSON format')
+    is_read = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Notification'
+        verbose_name_plural = 'Notifications'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', '-created_at']),
+            models.Index(fields=['user', 'is_read', '-created_at']),
+        ]
+
+    def __str__(self):
+        return f"{self.user.email} - {self.title}"

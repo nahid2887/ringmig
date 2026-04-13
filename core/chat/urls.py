@@ -1,6 +1,6 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import ConversationViewSet
+from .views import ConversationViewSet, UserNotificationListView
 from .call_views import (
     UniversalCallPackageViewSet,
     CallPackageViewSet,
@@ -20,5 +20,6 @@ router.register(r'payouts', ListenerPayoutViewSet, basename='listener-payout')
 # router.register(r'agora-calls', AgoraCallViewSet, basename='agora-call')  # Agora system commented out
 
 urlpatterns = [
+    path('notifications/', UserNotificationListView.as_view(), name='user-notifications'),
     path('', include(router.urls)),
 ]

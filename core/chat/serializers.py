@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from .models import Conversation, Message, FileAttachment
+from .models import Conversation, Message, FileAttachment, Notification
 from .call_models import CallRejection, ListenerPayout, CallPackage
 
 User = get_user_model()
@@ -243,3 +243,15 @@ class CallPayoutListSerializer(serializers.ModelSerializer):
         if obj.call_package:
             return obj.call_package.package.name
         return None
+
+
+class NotificationSerializer(serializers.ModelSerializer):
+    """Serializer for persisted user notifications."""
+
+    class Meta:
+        model = Notification
+        fields = [
+            'id', 'notification_type', 'title', 'message',
+            'data', 'is_read', 'created_at'
+        ]
+        read_only_fields = ['id', 'created_at']

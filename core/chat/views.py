@@ -2,22 +2,85 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.views import APIView
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
+from drf_yasg.utils import swagger_auto_schema
+from drf_yasg import openapi
 from django.shortcuts import get_object_or_404
 from django.db.models import Q
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from .models import Conversation, Message, FileAttachment
+from .models import Notification
 from listener.models import ListenerBlockedTalker
 from .serializers import (
     ConversationSerializer, 
     ConversationListSerializer,
     ConversationCreateSerializer,
     MessageSerializer,
-    FileAttachmentSerializer
+    FileAttachmentSerializer,
+    NotificationSerializer,
 )
 
 User = get_user_model()
+
+
+class UserNotificationListView(APIView):
+    """API for users to fetch their notification history."""
+
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        operation_description='Get notification history for authenticated user',
+        manual_parameters=[
+            openapi.Parameter(
+                'unread_only',
+                openapi.IN_QUERY,
+                description='Filter unread notifications only (true/false)',
+                type=openapi.TYPE_BOOLEAN,
+            ),
+            openapi.Parameter(
+                'limit',
+                openapi.IN_QUERY,
+                description='Number of notifications to return (default 50, max 200)',
+                type=openapi.TYPE_INTEGER,
+            ),
+            openapi.Parameter(
+                'offset',
+                openapi.IN_QUERY,
+                description='Pagination offset (default 0)',
+                type=openapi.TYPE_INTEGER,
+            ),
+        ],
+        responses={200: openapi.Response('Notifications list')},
+        tags=['Notifications']
+    )
+    def get(self, request):
+        unread_only = str(request.query_params.get('unread_only', '')).lower() in ['1', 'true', 'yes']
+        limit = int(request.query_params.get('limit', 50) or 50)
+        offset = int(request.query_params.get('offset', 0) or 0)
+        limit = max(1, min(limit, 200))
+        offset = max(0, offset)
+
+        queryset = Notification.objects.filter(user=request.user).order_by('-created_at')
+        if unread_only:
+            queryset = queryset.filter(is_read=False)
+
+        total_count = queryset.count()
+        unread_count = Notification.objects.filter(user=request.user, is_read=False).count()
+        rows = queryset[offset:offset + limit]
+
+        serializer = NotificationSerializer(rows, many=True)
+        return Response(
+            {
+                'count': total_count,
+                'unread_count': unread_count,
+                'limit': limit,
+                'offset': offset,
+                'results': serializer.data,
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class ConversationViewSet(viewsets.ModelViewSet):
