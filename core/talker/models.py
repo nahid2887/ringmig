@@ -235,6 +235,18 @@ class TalkerBalance(models.Model):
         help_text=_('Total refunded credits received from rejected/deleted bookings')
     )
 
+    stripe_account_id = models.CharField(
+        max_length=255,
+        blank=True,
+        default='',
+        help_text=_('Stripe Connect account id used for payouts')
+    )
+
+    stripe_account_verified = models.BooleanField(
+        default=False,
+        help_text=_('Whether Stripe Connect account is verified for payouts')
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

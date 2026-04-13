@@ -6,6 +6,10 @@ from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 from django.shortcuts import get_object_or_404
+from django.conf import settings
+from django.db import transaction
+from decimal import Decimal, InvalidOperation
+import stripe
 from .models import TalkerProfile, FavoriteListener
 from .serializers import (TalkerProfileSerializer, FavoriteListenerSerializer, AddFavoriteListenerSerializer,
                           TalkerCallHistorySerializer, TalkerCallHistoryDetailSerializer,
@@ -13,6 +17,8 @@ from .serializers import (TalkerProfileSerializer, FavoriteListenerSerializer, A
 from listener.models import ListenerProfile, ListenerRating, ListenerBlockedTalker
 from listener.serializers import ListenerListSerializer, ListenerRatingSerializer, ListenerReviewDisplaySerializer
 from .models import TalkerBalance
+
+stripe.api_key = settings.STRIPE_SECRET_KEY
 
 
 class IsTalkerUser(IsAuthenticated):
@@ -409,6 +415,134 @@ class TalkerBalanceViewSet(viewsets.ReadOnlyModelViewSet):
                 'balance_created_now': created,
             }
         })
+
+    @swagger_auto_schema(
+        operation_description='Create payout link / process payout for talker balance',
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            properties={
+                'amount': openapi.Schema(type=openapi.TYPE_STRING, description='Amount to payout'),
+            },
+            required=['amount']
+        ),
+        tags=['Talker Balance']
+    )
+    @action(detail=False, methods=['post'], url_path='create-payout-link')
+    def create_payout_link(self, request):
+        """Create Stripe Connect onboarding link or transfer payout for talker."""
+        user = request.user
+        if user.user_type != 'talker':
+            return Response(
+                {'error': 'Only talkers can request payouts'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        amount_raw = request.data.get('amount')
+        if amount_raw in [None, '']:
+            return Response({'error': 'amount is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            amount = Decimal(str(amount_raw))
+        except (InvalidOperation, ValueError):
+            return Response({'error': 'Invalid amount format'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if amount <= 0:
+            return Response({'error': 'Amount must be greater than 0'}, status=status.HTTP_400_BAD_REQUEST)
+
+        balance, _ = TalkerBalance.objects.get_or_create(
+            talker=user,
+            defaults={'available_balance': Decimal('0.00'), 'total_earned': Decimal('0.00'), 'total_refunded': Decimal('0.00')}
+        )
+
+        if amount > balance.available_balance:
+            return Response(
+                {
+                    'error': f'Insufficient balance. Available: ${balance.available_balance}',
+                    'available_balance': str(balance.available_balance),
+                    'requested_amount': str(amount),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        stripe_account_id = balance.stripe_account_id or ''
+
+        try:
+            if not stripe_account_id:
+                display_name = user.full_name or user.email
+                name_parts = display_name.split(' ', 1)
+                first_name = name_parts[0]
+                last_name = name_parts[1] if len(name_parts) > 1 else ''
+
+                account = stripe.Account.create(
+                    type='express',
+                    country='US',
+                    email=user.email,
+                    capabilities={'transfers': {'requested': True}},
+                    business_type='individual',
+                    individual={
+                        'first_name': first_name,
+                        'last_name': last_name,
+                    },
+                )
+                stripe_account_id = account.id
+                balance.stripe_account_id = stripe_account_id
+                balance.stripe_account_verified = False
+                balance.save(update_fields=['stripe_account_id', 'stripe_account_verified', 'updated_at'])
+
+            account = stripe.Account.retrieve(stripe_account_id)
+            currently_due = account.get('requirements', {}).get('currently_due') or []
+            payouts_enabled = account.get('payouts_enabled', False)
+
+            if currently_due or not payouts_enabled:
+                account_link = stripe.AccountLink.create(
+                    account=stripe_account_id,
+                    refresh_url=f"{getattr(settings, 'BACKEND_URL', 'http://localhost:8000')}/talker/reauth",
+                    return_url=f"{getattr(settings, 'BACKEND_URL', 'http://localhost:8000')}/talker/dashboard",
+                    type='account_onboarding',
+                )
+                return Response(
+                    {
+                        'message': 'Complete Stripe onboarding.',
+                        'onboarding_url': account_link.url,
+                        'status': 'onboarding_required',
+                        'stripe_account_id': stripe_account_id,
+                    },
+                    status=status.HTTP_200_OK,
+                )
+
+            transfer = stripe.Transfer.create(
+                amount=int(amount * 100),
+                currency='usd',
+                destination=stripe_account_id,
+                description=f'Payout for talker {user.email}',
+            )
+
+            with transaction.atomic():
+                locked_balance = TalkerBalance.objects.select_for_update().get(id=balance.id)
+                if amount > locked_balance.available_balance:
+                    return Response(
+                        {'error': f'Insufficient balance. Available: ${locked_balance.available_balance}'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                locked_balance.available_balance -= amount
+                locked_balance.stripe_account_verified = True
+                locked_balance.save(update_fields=['available_balance', 'stripe_account_verified', 'updated_at'])
+
+            return Response(
+                {
+                    'detail': 'Talker payout successful.',
+                    'transfer_id': transfer.id,
+                    'amount': str(amount),
+                    'new_balance': str((balance.available_balance - amount).quantize(Decimal('0.01'))),
+                },
+                status=status.HTTP_201_CREATED,
+            )
+
+        except stripe.error.StripeError as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     @swagger_auto_schema(
         operation_description="Get detailed information about an available listener",

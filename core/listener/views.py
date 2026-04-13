@@ -7,6 +7,9 @@ from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 from django.shortcuts import get_object_or_404
 from django.db import transaction
+from django.utils import timezone
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
 from decimal import Decimal, InvalidOperation
 from .models import ListenerProfile, ListenerRating, ListenerBalance, ListenerBlockedTalker, ListenerBookingRefund
 from .serializers import (ListenerProfileSerializer, ListenerListSerializer, ListenerRatingSerializer,
@@ -735,6 +738,35 @@ class ListenerBalanceViewSet(viewsets.ReadOnlyModelViewSet):
 
                 refund_tracker.total_refunded = (already_refunded + refund_amount).quantize(Decimal('0.01'))
                 refund_tracker.save(update_fields=['total_refunded', 'updated_at'])
+
+                channel_layer = get_channel_layer()
+                if channel_layer:
+                    event_payload = {
+                        'type': 'booking_refund_notification',
+                        'booking_id': str(booking.id),
+                        'refund_amount': str(refund_amount),
+                        'listener_id': booking.listener.id,
+                        'talker_id': booking.talker.id,
+                        'timestamp': timezone.now().isoformat(),
+                    }
+
+                    # Notify listener who performed the refund.
+                    async_to_sync(channel_layer.group_send)(
+                        f'user_{booking.listener.id}_notifications',
+                        {
+                            **event_payload,
+                            'message': f'Refund processed for booking {booking.id}: ${refund_amount}',
+                        },
+                    )
+
+                    # Notify talker who receives refund credit.
+                    async_to_sync(channel_layer.group_send)(
+                        f'user_{booking.talker.id}_notifications',
+                        {
+                            **event_payload,
+                            'message': f'You received a refund credit of ${refund_amount} for booking {booking.id}',
+                        },
+                    )
 
                 return Response(
                     {

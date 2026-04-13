@@ -1374,6 +1374,7 @@ class UserBookingListConsumer(AsyncWebsocketConsumer):
                 'id': booking.package_id,
                 'name': booking.package.name if booking.package else None,
                 'description': booking.package.description if booking.package else None,
+                'media_type': booking.package.media_type if booking.package else None,
                 'duration': booking.package.duration if booking.package else None,
             },
             'created_at': booking.created_at.isoformat(),

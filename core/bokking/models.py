@@ -113,6 +113,11 @@ class UniversalBookingPackage(models.Model):
         ('recurring', _('Recurring')),
     ]
 
+    MEDIA_TYPE_CHOICES = [
+        ('audio', _('Audio')),
+        ('video', _('Video')),
+    ]
+
     name = models.CharField(
         max_length=100,
         help_text=_('Package name')
@@ -126,6 +131,12 @@ class UniversalBookingPackage(models.Model):
         choices=PACKAGE_TYPE_CHOICES,
         default='one_time',
         help_text=_('Type of booking package')
+    )
+    media_type = models.CharField(
+        max_length=20,
+        choices=MEDIA_TYPE_CHOICES,
+        default='audio',
+        help_text=_('Meeting media type')
     )
     duration = models.PositiveIntegerField(
         validators=[MinValueValidator(1)],

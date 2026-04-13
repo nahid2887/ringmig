@@ -210,18 +210,167 @@ class SuperAdminDashboardView(APIView):
 
 
 class DashboardUserStatsView(APIView):
-    """Detailed user statistics for superadmin."""
+    """User management for superadmin (list/detail/status/delete)."""
     permission_classes = [IsSuperAdmin]
     
     @swagger_auto_schema(
-        operation_description="Get detailed user statistics",
-        responses={200: openapi.Response('User statistics')},
+        operation_description="Get full users list or one specific user details",
+        manual_parameters=[
+            openapi.Parameter('user_id', openapi.IN_QUERY, type=openapi.TYPE_INTEGER, description='Optional user ID for specific user view'),
+            openapi.Parameter('search', openapi.IN_QUERY, type=openapi.TYPE_STRING, description='Search by email/full_name/phone'),
+            openapi.Parameter('user_type', openapi.IN_QUERY, type=openapi.TYPE_STRING, description='Filter by user type: talker/listener/superadmin'),
+            openapi.Parameter('status', openapi.IN_QUERY, type=openapi.TYPE_STRING, description='Filter by admin status: active/suspended/blocked'),
+            openapi.Parameter('limit', openapi.IN_QUERY, type=openapi.TYPE_INTEGER, description='Page size, default 50'),
+            openapi.Parameter('offset', openapi.IN_QUERY, type=openapi.TYPE_INTEGER, description='Pagination offset, default 0'),
+        ],
+        responses={200: openapi.Response('Users list/details')},
         tags=['SuperAdmin Dashboard']
     )
-    def get(self, request):
-        """Get detailed statistics about users."""
-        
-        stats = {
+    def get(self, request, user_id=None):
+        """Get users list with dashboard cards or a specific user details."""
+        target_user_id = user_id or request.query_params.get('user_id')
+        if target_user_id:
+            return self._get_user_detail(target_user_id)
+
+        search = (request.query_params.get('search') or '').strip()
+        user_type_filter = (request.query_params.get('user_type') or '').strip()
+        status_filter = (request.query_params.get('status') or '').strip()
+        limit = int(request.query_params.get('limit', 50) or 50)
+        offset = int(request.query_params.get('offset', 0) or 0)
+        limit = max(1, min(limit, 200))
+        offset = max(0, offset)
+
+        users_qs = User.objects.all().order_by('-created_at')
+
+        if search:
+            users_qs = users_qs.filter(
+                Q(email__icontains=search) |
+                Q(full_name__icontains=search) |
+                Q(phone_number__icontains=search)
+            )
+
+        if user_type_filter:
+            users_qs = users_qs.filter(user_type=user_type_filter)
+
+        if status_filter:
+            users_qs = users_qs.filter(admin_status=status_filter)
+
+        total_count = users_qs.count()
+        users_slice = list(users_qs[offset:offset + limit])
+
+        return Response({
+            'summary': self._build_user_summary(),
+            'count': total_count,
+            'limit': limit,
+            'offset': offset,
+            'results': [self._serialize_user_dashboard_row(u) for u in users_slice],
+        }, status=status.HTTP_200_OK)
+
+    @swagger_auto_schema(
+        operation_description="Update a specific user's admin status (active/suspended/blocked)",
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            required=['user_id', 'status'],
+            properties={
+                'user_id': openapi.Schema(type=openapi.TYPE_INTEGER),
+                'status': openapi.Schema(type=openapi.TYPE_STRING, enum=['active', 'suspended', 'blocked']),
+            }
+        ),
+        responses={200: openapi.Response('User status updated')},
+        tags=['SuperAdmin Dashboard']
+    )
+    def patch(self, request, user_id=None):
+        target_user_id = user_id or request.data.get('user_id')
+        new_status = request.data.get('status')
+
+        if not target_user_id or not new_status:
+            return Response(
+                {'error': 'user_id and status are required'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if new_status not in ['active', 'suspended', 'blocked']:
+            return Response(
+                {'error': 'status must be one of: active, suspended, blocked'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            target_user = User.objects.get(id=target_user_id)
+        except User.DoesNotExist:
+            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        if target_user.id == request.user.id:
+            return Response({'error': 'You cannot change your own status'}, status=status.HTTP_400_BAD_REQUEST)
+
+        target_user.admin_status = new_status
+        target_user.is_active = (new_status == 'active')
+        target_user.save(update_fields=['admin_status', 'is_active', 'updated_at'])
+
+        return Response(
+            {
+                'message': 'User status updated successfully',
+                'user': self._serialize_user_dashboard_row(target_user),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    @swagger_auto_schema(
+        operation_description="Delete a specific user by user_id",
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            required=['user_id'],
+            properties={
+                'user_id': openapi.Schema(type=openapi.TYPE_INTEGER),
+            }
+        ),
+        responses={200: openapi.Response('User deleted')},
+        tags=['SuperAdmin Dashboard']
+    )
+    def delete(self, request, user_id=None):
+        target_user_id = user_id or request.data.get('user_id')
+        if not target_user_id:
+            return Response({'error': 'user_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            target_user = User.objects.get(id=target_user_id)
+        except User.DoesNotExist:
+            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        if target_user.id == request.user.id:
+            return Response({'error': 'You cannot delete your own account'}, status=status.HTTP_400_BAD_REQUEST)
+
+        deleted_user_payload = {
+            'id': target_user.id,
+            'email': target_user.email,
+            'full_name': target_user.full_name,
+            'user_type': target_user.user_type,
+        }
+        target_user.delete()
+
+        return Response(
+            {
+                'message': 'User deleted successfully',
+                'deleted_user': deleted_user_payload,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    def _get_user_detail(self, user_id):
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        return Response(
+            {
+                'user': self._serialize_user_dashboard_row(user),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    def _build_user_summary(self):
+        return {
             'active_users': User.objects.filter(is_active=True).count(),
             'inactive_users': User.objects.filter(is_active=False).count(),
             'verified_users': User.objects.filter(is_verified=True).count(),
@@ -232,13 +381,375 @@ class DashboardUserStatsView(APIView):
                 'listener': User.objects.filter(user_type='listener').count(),
                 'superadmin': User.objects.filter(user_type='superadmin').count(),
             },
-            'users_by_language': {
-                'en': User.objects.filter(language='en').count(),
-                'sv': User.objects.filter(language='sv').count(),
-            }
+            'users_by_status': {
+                'active': User.objects.filter(admin_status='active').count(),
+                'suspended': User.objects.filter(admin_status='suspended').count(),
+                'blocked': User.objects.filter(admin_status='blocked').count(),
+            },
         }
-        
-        return Response(stats, status=status.HTTP_200_OK)
+
+    def _serialize_user_dashboard_row(self, user):
+        from listener.models import ListenerProfile, ListenerBalance
+        from talker.models import TalkerBalance
+        from chat.call_models import CallSession
+
+        sessions_count = CallSession.objects.filter(Q(talker=user) | Q(listener=user)).count()
+
+        rating = None
+        earnings = Decimal('0.00')
+
+        if user.user_type == 'listener':
+            listener_profile = ListenerProfile.objects.filter(user=user).first()
+            if listener_profile:
+                rating = listener_profile.average_rating
+
+            listener_balance = ListenerBalance.objects.filter(listener=user).first()
+            if listener_balance:
+                earnings = listener_balance.available_balance
+        elif user.user_type == 'talker':
+            talker_balance = TalkerBalance.objects.filter(talker=user).first()
+            if talker_balance:
+                earnings = talker_balance.available_balance
+
+        return {
+            'id': user.id,
+            'email': user.email,
+            'full_name': user.full_name,
+            'phone_number': user.phone_number,
+            'user_type': user.user_type,
+            'language': user.language,
+            'status': user.admin_status,
+            'is_active': user.is_active,
+            'is_verified': user.is_verified,
+            'sessions': sessions_count,
+            'earnings': str(earnings),
+            'rating': rating,
+            'created_at': user.created_at,
+            'updated_at': user.updated_at,
+        }
+
+
+class DashboardSessionsView(APIView):
+    """Sessions list for superadmin (booking sessions + call sessions)."""
+    permission_classes = [IsSuperAdmin]
+
+    @swagger_auto_schema(
+        operation_description="Get superadmin sessions list (booking + call sessions)",
+        manual_parameters=[
+            openapi.Parameter('source', openapi.IN_QUERY, type=openapi.TYPE_STRING, description='all|booking|call (default: all)'),
+            openapi.Parameter('status', openapi.IN_QUERY, type=openapi.TYPE_STRING, description='Optional status filter within selected source'),
+            openapi.Parameter('limit', openapi.IN_QUERY, type=openapi.TYPE_INTEGER, description='Page size, default 50'),
+            openapi.Parameter('offset', openapi.IN_QUERY, type=openapi.TYPE_INTEGER, description='Pagination offset, default 0'),
+        ],
+        responses={200: openapi.Response('Sessions list')},
+        tags=['SuperAdmin Dashboard']
+    )
+    def get(self, request):
+        source = (request.query_params.get('source') or 'all').strip().lower()
+        status_filter = (request.query_params.get('status') or '').strip().lower()
+        limit = int(request.query_params.get('limit', 50) or 50)
+        offset = int(request.query_params.get('offset', 0) or 0)
+        limit = max(1, min(limit, 200))
+        offset = max(0, offset)
+
+        if source not in ['all', 'booking', 'call']:
+            return Response(
+                {'error': 'source must be one of: all, booking, call'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        items = []
+        booking_count = 0
+        call_count = 0
+
+        if source in ['all', 'booking']:
+            from bokking.models import SessionBooking
+
+            booking_qs = SessionBooking.objects.select_related('talker', 'listener').order_by('-created_at')
+            if status_filter:
+                booking_qs = booking_qs.filter(status=status_filter)
+
+            booking_count = booking_qs.count()
+            booking_items = [self._serialize_booking_session(obj) for obj in booking_qs[:500]]
+            items.extend(booking_items)
+
+        if source in ['all', 'call']:
+            from chat.call_models import CallSession
+
+            call_qs = CallSession.objects.select_related('talker', 'listener', 'call_package').order_by('-created_at')
+            if status_filter:
+                call_qs = call_qs.filter(status=status_filter)
+
+            call_count = call_qs.count()
+            call_items = [self._serialize_call_session(obj) for obj in call_qs[:500]]
+            items.extend(call_items)
+
+        items.sort(key=lambda row: row['created_at'], reverse=True)
+        total_count = len(items)
+        page_items = items[offset:offset + limit]
+
+        return Response(
+            {
+                'summary': {
+                    'booking_sessions': booking_count,
+                    'call_sessions': call_count,
+                    'total_sessions': booking_count + call_count,
+                },
+                'count': total_count,
+                'limit': limit,
+                'offset': offset,
+                'results': page_items,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    def _serialize_booking_session(self, booking):
+        created_at = booking.created_at.isoformat() if booking.created_at else None
+        return {
+            'source': 'booking',
+            'session_id': str(booking.id),
+            'talker': {
+                'id': booking.talker_id,
+                'email': booking.talker.email,
+                'full_name': booking.talker.full_name,
+            },
+            'listener': {
+                'id': booking.listener_id,
+                'email': booking.listener.email,
+                'full_name': booking.listener.full_name,
+            },
+            'status': booking.status,
+            'amount': str(booking.listener_amount),
+            'duration_minutes': booking.duration_minutes,
+            'booking_date': booking.booking_date.isoformat(),
+            'start_time': booking.start_time.strftime('%H:%M:%S'),
+            'end_time': booking.end_time.strftime('%H:%M:%S'),
+            'created_at': created_at,
+            '_sort_ts': booking.created_at.timestamp() if booking.created_at else 0,
+        }
+
+    def _serialize_call_session(self, call_session):
+        amount = Decimal('0.00')
+        if call_session.call_package and call_session.call_package.listener_amount is not None:
+            amount = call_session.call_package.listener_amount
+
+        created_at = call_session.created_at.isoformat() if call_session.created_at else None
+        return {
+            'source': 'call',
+            'session_id': str(call_session.id),
+            'talker': {
+                'id': call_session.talker_id,
+                'email': call_session.talker.email,
+                'full_name': call_session.talker.full_name,
+            },
+            'listener': {
+                'id': call_session.listener_id,
+                'email': call_session.listener.email,
+                'full_name': call_session.listener.full_name,
+            },
+            'status': call_session.status,
+            'amount': str(amount),
+            'duration_minutes': call_session.total_minutes_purchased,
+            'booking_date': call_session.started_at.date().isoformat() if call_session.started_at else None,
+            'start_time': call_session.started_at.time().strftime('%H:%M:%S') if call_session.started_at else None,
+            'end_time': call_session.ended_at.time().strftime('%H:%M:%S') if call_session.ended_at else None,
+            'created_at': created_at,
+            '_sort_ts': call_session.created_at.timestamp() if call_session.created_at else 0,
+        }
+
+
+class DashboardTransactionsView(APIView):
+    """Transactions list for superadmin (talker/listener rows)."""
+    permission_classes = [IsSuperAdmin]
+
+    @swagger_auto_schema(
+        operation_description='Get transaction list for superadmin dashboard',
+        manual_parameters=[
+            openapi.Parameter('search', openapi.IN_QUERY, type=openapi.TYPE_STRING, description='Search by talker/listener name or email'),
+            openapi.Parameter('source', openapi.IN_QUERY, type=openapi.TYPE_STRING, description='all|revenue|booking|call_package (default: all)'),
+            openapi.Parameter('status', openapi.IN_QUERY, type=openapi.TYPE_STRING, description='Optional status filter'),
+            openapi.Parameter('limit', openapi.IN_QUERY, type=openapi.TYPE_INTEGER, description='Page size, default 50'),
+            openapi.Parameter('offset', openapi.IN_QUERY, type=openapi.TYPE_INTEGER, description='Pagination offset, default 0'),
+        ],
+        responses={200: openapi.Response('Transactions list')},
+        tags=['SuperAdmin Dashboard']
+    )
+    def get(self, request):
+        search = (request.query_params.get('search') or '').strip()
+        source = (request.query_params.get('source') or 'all').strip().lower()
+        status_filter = (request.query_params.get('status') or '').strip().lower()
+        limit = int(request.query_params.get('limit', 50) or 50)
+        offset = int(request.query_params.get('offset', 0) or 0)
+        limit = max(1, min(limit, 200))
+        offset = max(0, offset)
+
+        if source not in ['all', 'revenue', 'booking', 'call_package']:
+            return Response(
+                {'error': 'source must be one of: all, revenue, booking, call_package'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        items = []
+
+        if source in ['all', 'revenue']:
+            revenue_qs = RevenueTracking.objects.select_related('talker', 'listener').order_by('-created_at')
+            if search:
+                revenue_qs = revenue_qs.filter(
+                    Q(talker__email__icontains=search) |
+                    Q(talker__full_name__icontains=search) |
+                    Q(listener__email__icontains=search) |
+                    Q(listener__full_name__icontains=search)
+                )
+
+            for tx in revenue_qs[:500]:
+                items.append({
+                    'source': 'revenue',
+                    'transaction_id': tx.id,
+                    'external_id': tx.stripe_payment_intent_id,
+                    'talker': {
+                        'id': tx.talker_id,
+                        'email': tx.talker.email,
+                        'full_name': tx.talker.full_name,
+                    },
+                    'listener': {
+                        'id': tx.listener_id,
+                        'email': tx.listener.email,
+                        'full_name': tx.listener.full_name,
+                    },
+                    'listener_earnings': str(tx.listener_portion),
+                    'platform_commission': str(tx.admin_portion),
+                    'platform_commission_percent': str(tx.admin_percentage),
+                    'total': str(tx.total_amount),
+                    'status': 'accepted',
+                    'transaction_type': tx.transaction_type,
+                    'created_at': tx.created_at.isoformat(),
+                    '_sort_ts': tx.created_at.timestamp(),
+                })
+
+        if source in ['all', 'booking']:
+            from bokking.models import SessionBooking
+
+            booking_qs = SessionBooking.objects.select_related('talker', 'listener').order_by('-created_at')
+            if search:
+                booking_qs = booking_qs.filter(
+                    Q(talker__email__icontains=search) |
+                    Q(talker__full_name__icontains=search) |
+                    Q(listener__email__icontains=search) |
+                    Q(listener__full_name__icontains=search)
+                )
+            if status_filter:
+                booking_qs = booking_qs.filter(status=status_filter)
+
+            for tx in booking_qs[:500]:
+                admin_percentage = Decimal('0.00')
+                if tx.price and tx.price > 0:
+                    admin_percentage = ((tx.app_fee / tx.price) * Decimal('100')).quantize(Decimal('0.01'))
+
+                display_status = 'accepted' if tx.status == 'completed' else ('rejected' if tx.status == 'cancelled' else tx.status)
+
+                items.append({
+                    'source': 'booking',
+                    'transaction_id': str(tx.id),
+                    'external_id': tx.transaction_id,
+                    'talker': {
+                        'id': tx.talker_id,
+                        'email': tx.talker.email,
+                        'full_name': tx.talker.full_name,
+                    },
+                    'listener': {
+                        'id': tx.listener_id,
+                        'email': tx.listener.email,
+                        'full_name': tx.listener.full_name,
+                    },
+                    'listener_earnings': str(tx.listener_amount),
+                    'platform_commission': str(tx.app_fee),
+                    'platform_commission_percent': str(admin_percentage),
+                    'total': str(tx.price),
+                    'status': display_status,
+                    'transaction_type': 'booking',
+                    'created_at': tx.created_at.isoformat(),
+                    '_sort_ts': tx.created_at.timestamp(),
+                })
+
+        if source in ['all', 'call_package']:
+            from chat.call_models import CallPackage
+
+            call_package_qs = CallPackage.objects.select_related('talker', 'listener').order_by('-created_at')
+            if search:
+                call_package_qs = call_package_qs.filter(
+                    Q(talker__email__icontains=search) |
+                    Q(talker__full_name__icontains=search) |
+                    Q(listener__email__icontains=search) |
+                    Q(listener__full_name__icontains=search)
+                )
+
+            for tx in call_package_qs[:500]:
+                admin_percentage = Decimal('0.00')
+                if tx.total_amount and tx.total_amount > 0:
+                    admin_percentage = ((tx.app_fee / tx.total_amount) * Decimal('100')).quantize(Decimal('0.01'))
+
+                raw_status = (tx.status or '').lower()
+                if raw_status in ['confirmed', 'completed', 'in_progress', 'active', 'used']:
+                    display_status = 'accepted'
+                elif raw_status in ['cancelled', 'failed', 'refunded']:
+                    display_status = 'rejected'
+                else:
+                    display_status = raw_status or 'pending'
+
+                items.append({
+                    'source': 'call_package',
+                    'transaction_id': tx.id,
+                    'external_id': tx.stripe_payment_intent_id,
+                    'talker': {
+                        'id': tx.talker_id,
+                        'email': tx.talker.email,
+                        'full_name': tx.talker.full_name,
+                    },
+                    'listener': {
+                        'id': tx.listener_id,
+                        'email': tx.listener.email,
+                        'full_name': tx.listener.full_name,
+                    },
+                    'listener_earnings': str(tx.listener_amount),
+                    'platform_commission': str(tx.app_fee),
+                    'platform_commission_percent': str(admin_percentage),
+                    'total': str(tx.total_amount),
+                    'status': display_status,
+                    'transaction_type': 'extension' if tx.is_extension else 'call_purchase',
+                    'created_at': tx.created_at.isoformat(),
+                    '_sort_ts': tx.created_at.timestamp(),
+                })
+
+        if status_filter:
+            items = [row for row in items if str(row.get('status', '')).lower() == status_filter]
+
+        source_counts = {
+            'revenue': 0,
+            'booking': 0,
+            'call_package': 0,
+        }
+        for row in items:
+            row_source = row.get('source')
+            if row_source in source_counts:
+                source_counts[row_source] += 1
+
+        items.sort(key=lambda row: row['_sort_ts'], reverse=True)
+        total_count = len(items)
+        page_items = items[offset:offset + limit]
+
+        for row in page_items:
+            row.pop('_sort_ts', None)
+
+        return Response(
+            {
+                'count': total_count,
+                'source_counts': source_counts,
+                'limit': limit,
+                'offset': offset,
+                'results': page_items,
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class DashboardRevenueStatsView(APIView):

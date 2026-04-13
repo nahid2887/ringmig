@@ -16,7 +16,9 @@ from .views import (
 from .dashboard_views import (
     SuperAdminDashboardView,
     DashboardUserStatsView,
-    DashboardRevenueStatsView
+    DashboardRevenueStatsView,
+    DashboardSessionsView,
+    DashboardTransactionsView,
 )
 
 urlpatterns = [
@@ -40,5 +42,8 @@ urlpatterns = [
     # SuperAdmin Dashboard
     path('dashboard/', SuperAdminDashboardView.as_view(), name='dashboard'),
     path('dashboard/users/', DashboardUserStatsView.as_view(), name='dashboard-users'),
-    path('dashboard/revenue/', DashboardRevenueStatsView.as_view(), name='dashboard-revenue'),
+    path('dashboard/users/<int:user_id>/', DashboardUserStatsView.as_view(), name='dashboard-user-detail'),
+    path('dashboard/sessions/', DashboardSessionsView.as_view(), name='dashboard-sessions'),
+    path('dashboard/transactions/', DashboardTransactionsView.as_view(), name='dashboard-transactions'),
+    #path('dashboard/revenue/', DashboardRevenueStatsView.as_view(), name='dashboard-revenue'),
 ]

@@ -149,7 +149,7 @@ class UniversalBookingPackageSerializer(serializers.ModelSerializer):
     class Meta:
         model = UniversalBookingPackage
         fields = [
-            'id', 'name', 'description', 'package_type', 'duration',
+            'id', 'name', 'description', 'package_type', 'media_type', 'duration',
             'price', 'app_fee_percentage', 'app_fee', 'listener_amount',
             'is_active', 'created_at', 'updated_at'
         ]
@@ -160,24 +160,32 @@ class SessionBookingSerializer(serializers.ModelSerializer):
     """Serializer for session booking records."""
 
     talker_email = serializers.EmailField(source='talker.email', read_only=True)
+    talker_name = serializers.SerializerMethodField()
     listener_email = serializers.EmailField(source='listener.email', read_only=True)
+    listener_name = serializers.SerializerMethodField()
     package_details = UniversalBookingPackageSerializer(source='package', read_only=True)
 
     class Meta:
         model = SessionBooking
         fields = [
-            'id', 'talker', 'talker_email', 'listener', 'listener_email',
+            'id', 'talker', 'talker_name', 'talker_email', 'listener', 'listener_name', 'listener_email',
             'package', 'package_details', 'booking_date', 'start_time', 'end_time',
             'duration_minutes', 'buffer_time_minutes', 'status', 'payment_link',
             'transaction_id', 'price', 'app_fee', 'listener_amount',
             'created_at', 'updated_at', 'payment_completed_at'
         ]
         read_only_fields = [
-            'id', 'talker', 'talker_email', 'listener_email', 'end_time',
+            'id', 'talker', 'talker_name', 'talker_email', 'listener_name', 'listener_email', 'end_time',
             'duration_minutes', 'buffer_time_minutes', 'status', 'payment_link',
             'transaction_id', 'price', 'app_fee', 'listener_amount',
             'created_at', 'updated_at', 'payment_completed_at'
         ]
+
+    def get_talker_name(self, obj):
+        return obj.talker.full_name or obj.talker.email
+
+    def get_listener_name(self, obj):
+        return obj.listener.full_name or obj.listener.email
 
 
 class PurchaseSessionBookingSerializer(serializers.Serializer):

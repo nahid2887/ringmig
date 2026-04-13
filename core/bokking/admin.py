@@ -52,8 +52,8 @@ class TimeSlotAdmin(admin.ModelAdmin):
 
 @admin.register(UniversalBookingPackage)
 class UniversalBookingPackageAdmin(admin.ModelAdmin):
-    list_display = ('id', 'name', 'package_type', 'duration', 'price', 'is_active', 'created_at')
-    list_filter = ('package_type', 'is_active')
+    list_display = ('id', 'name', 'package_type', 'media_type', 'duration', 'price', 'is_active', 'created_at')
+    list_filter = ('package_type', 'media_type', 'is_active')
     search_fields = ('name', 'description')
     readonly_fields = ('created_at', 'updated_at')
 

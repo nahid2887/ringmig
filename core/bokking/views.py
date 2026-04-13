@@ -581,6 +581,9 @@ class UniversalBookingPackageViewSet(viewsets.ReadOnlyModelViewSet):
         package_type = self.request.query_params.get('package_type')
         if package_type:
             queryset = queryset.filter(package_type=package_type)
+        media_type = self.request.query_params.get('media_type')
+        if media_type:
+            queryset = queryset.filter(media_type=media_type)
         return queryset.order_by('duration', 'price')
 
 
@@ -649,11 +652,40 @@ class SessionBookingViewSet(viewsets.ModelViewSet):
                         listener_reversed = refund_amount
 
             listener = booking.listener
+            talker = booking.talker
             booking_id = str(booking.id)
+            deleted_by_user_id = request.user.id
             booking.delete()
 
         if hasattr(listener, 'booking_availability'):
             broadcast_availability_update(listener.booking_availability)
+
+        channel_layer = get_channel_layer()
+        if channel_layer:
+            timestamp = timezone.now().isoformat()
+            base_event = {
+                'type': 'booking_deleted_notification',
+                'booking_id': booking_id,
+                'deleted_by_user_id': deleted_by_user_id,
+                'refund_amount': str(refund_amount),
+                'timestamp': timestamp,
+            }
+
+            async_to_sync(channel_layer.group_send)(
+                f'user_{talker.id}_notifications',
+                {
+                    **base_event,
+                    'message': f'Booking {booking_id} was deleted. Refund credited: ${refund_amount}',
+                },
+            )
+
+            async_to_sync(channel_layer.group_send)(
+                f'user_{listener.id}_notifications',
+                {
+                    **base_event,
+                    'message': f'Booking {booking_id} was deleted.',
+                },
+            )
 
         return Response(
             {

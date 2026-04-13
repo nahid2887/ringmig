@@ -650,6 +650,29 @@ class NotificationConsumer(AsyncWebsocketConsumer):
             'timestamp': event.get('timestamp'),
         }))
 
+    async def booking_refund_notification(self, event):
+        """Send booking refund notification to user."""
+        await self.send(text_data=json.dumps({
+            'type': 'booking_refund_notification',
+            'booking_id': event.get('booking_id'),
+            'refund_amount': event.get('refund_amount'),
+            'listener_id': event.get('listener_id'),
+            'talker_id': event.get('talker_id'),
+            'message': event.get('message'),
+            'timestamp': event.get('timestamp'),
+        }))
+
+    async def booking_deleted_notification(self, event):
+        """Send booking deleted notification to user."""
+        await self.send(text_data=json.dumps({
+            'type': 'booking_deleted_notification',
+            'booking_id': event.get('booking_id'),
+            'message': event.get('message'),
+            'deleted_by_user_id': event.get('deleted_by_user_id'),
+            'refund_amount': event.get('refund_amount'),
+            'timestamp': event.get('timestamp'),
+        }))
+
     async def _booking_reminder_loop(self):
         """Poll upcoming bookings and notify exactly 20 minutes before start."""
         try:

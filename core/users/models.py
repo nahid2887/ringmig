@@ -36,6 +36,12 @@ class User(AbstractBaseUser, PermissionsMixin):
         ('talker', _('Talker')),
         ('listener', _('Listener')),
     ]
+
+    ADMIN_STATUS_CHOICES = [
+        ('active', _('Active')),
+        ('suspended', _('Suspended')),
+        ('blocked', _('Blocked')),
+    ]
     
     email = models.EmailField(unique=True)
     full_name = models.CharField(max_length=200, blank=True)
@@ -47,6 +53,11 @@ class User(AbstractBaseUser, PermissionsMixin):
     phone_number = models.CharField(max_length=20, blank=True)
     birthday = models.DateField(null=True, blank=True)
     language = models.CharField(max_length=10, default='en')
+    admin_status = models.CharField(
+        max_length=20,
+        choices=ADMIN_STATUS_CHOICES,
+        default='active'
+    )
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
     is_verified = models.BooleanField(default=False)
