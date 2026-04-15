@@ -1,5 +1,35 @@
 from django.contrib import admin
-from .models import Conversation, Message, FileAttachment, CallSession, CallPackage, UniversalCallPackage
+from .models import Conversation, Message, FileAttachment, CallSession, CallPackage, UniversalCallPackage, PrivacyPolicy, TermsAndConditions
+
+
+class SingletonPolicyAdmin(admin.ModelAdmin):
+    """Admin editor that always opens the single policy row."""
+
+    readonly_fields = ['created_at', 'updated_at']
+    fields = ['content', 'created_at', 'updated_at']
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def get_queryset(self, request):
+        return self.model.objects.filter(pk=1)
+
+    def changelist_view(self, request, extra_context=None):
+        obj, _ = self.model.objects.get_or_create(pk=1)
+        return self.change_view(request, str(obj.pk), extra_context=extra_context)
+
+
+@admin.register(PrivacyPolicy)
+class PrivacyPolicyAdmin(SingletonPolicyAdmin):
+    pass
+
+
+@admin.register(TermsAndConditions)
+class TermsAndConditionsAdmin(SingletonPolicyAdmin):
+    pass
 
 
 @admin.register(Conversation)

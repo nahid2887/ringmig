@@ -9,6 +9,50 @@ User = get_user_model()
 from .call_models import CallSession, CallPackage, UniversalCallPackage
 
 
+class SingletonPolicyPage(models.Model):
+    """Abstract singleton page model for public policy content."""
+
+    content = models.TextField(blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        abstract = True
+        ordering = ['-updated_at']
+
+    def save(self, *args, **kwargs):
+        self.pk = 1
+        super().save(*args, **kwargs)
+
+    @classmethod
+    def load(cls):
+        """Return the single stored record, creating it if needed."""
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj
+
+
+class PrivacyPolicy(SingletonPolicyPage):
+    """Single editable privacy policy document."""
+
+    class Meta:
+        verbose_name = _('Privacy Policy')
+        verbose_name_plural = _('Privacy Policy')
+
+    def __str__(self):
+        return _('Privacy Policy')
+
+
+class TermsAndConditions(SingletonPolicyPage):
+    """Single editable terms and conditions document."""
+
+    class Meta:
+        verbose_name = _('Terms and Conditions')
+        verbose_name_plural = _('Terms and Conditions')
+
+    def __str__(self):
+        return _('Terms and Conditions')
+
+
 class Conversation(models.Model):
     """Represents a chat conversation between a listener and a talker."""
     

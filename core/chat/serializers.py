@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from .models import Conversation, Message, FileAttachment, Notification
+from .models import Conversation, Message, FileAttachment, Notification, PrivacyPolicy, TermsAndConditions
 from .call_models import CallRejection, ListenerPayout, CallPackage
 
 User = get_user_model()
@@ -255,3 +255,21 @@ class NotificationSerializer(serializers.ModelSerializer):
             'data', 'is_read', 'created_at'
         ]
         read_only_fields = ['id', 'created_at']
+
+
+class SingletonPolicySerializer(serializers.ModelSerializer):
+    """Base serializer for singleton policy pages."""
+
+    class Meta:
+        fields = ['id', 'content', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class PrivacyPolicySerializer(SingletonPolicySerializer):
+    class Meta(SingletonPolicySerializer.Meta):
+        model = PrivacyPolicy
+
+
+class TermsAndConditionsSerializer(SingletonPolicySerializer):
+    class Meta(SingletonPolicySerializer.Meta):
+        model = TermsAndConditions

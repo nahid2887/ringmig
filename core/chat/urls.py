@@ -7,6 +7,8 @@ from .views import (
     NotificationMarkAllReadView,
     NotificationMarkReadView,
     NotificationDeleteView,
+    PrivacyPolicyView,
+    TermsAndConditionsView,
 )
 from .call_views import (
     UniversalCallPackageViewSet,
@@ -27,6 +29,8 @@ router.register(r'payouts', ListenerPayoutViewSet, basename='listener-payout')
 # router.register(r'agora-calls', AgoraCallViewSet, basename='agora-call')  # Agora system commented out
 
 urlpatterns = [
+    path('privacy-policy/', PrivacyPolicyView.as_view(), name='privacy-policy'),
+    path('terms-and-conditions/', TermsAndConditionsView.as_view(), name='terms-and-conditions'),
     path('notifications/', UserNotificationListView.as_view(), name='user-notifications'),
     path('notifications/unread-count/', NotificationUnreadCountView.as_view(), name='notification-unread-count'),
     path('notifications/mark-all-read/', NotificationMarkAllReadView.as_view(), name='notification-mark-all-read'),

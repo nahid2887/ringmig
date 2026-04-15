@@ -1,7 +1,7 @@
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny, BasePermission
 from rest_framework.views import APIView
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from drf_yasg.utils import swagger_auto_schema
@@ -11,7 +11,7 @@ from django.db.models import Q
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from .models import Conversation, Message, FileAttachment
-from .models import Notification
+from .models import Notification, PrivacyPolicy, TermsAndConditions
 from listener.models import ListenerBlockedTalker
 from .serializers import (
     ConversationSerializer, 
@@ -20,9 +20,101 @@ from .serializers import (
     MessageSerializer,
     FileAttachmentSerializer,
     NotificationSerializer,
+    PrivacyPolicySerializer,
+    TermsAndConditionsSerializer,
 )
 
 User = get_user_model()
+
+
+class IsSuperUser(BasePermission):
+    """Allow access only to authenticated superusers."""
+
+    def has_permission(self, request, view):
+        return bool(request.user and request.user.is_authenticated and request.user.is_superuser)
+
+
+class SingletonPolicyAPIView(APIView):
+    """Shared behavior for public singleton policy documents."""
+
+    serializer_class = None
+    model = None
+    document_name = ''
+
+    def get_permissions(self):
+        if self.request.method == 'PATCH':
+            permission_classes = [IsSuperUser]
+        else:
+            permission_classes = [AllowAny]
+        return [permission() for permission in permission_classes]
+
+    def get_object(self):
+        return self.model.load()
+
+    def get_serializer(self, *args, **kwargs):
+        return self.serializer_class(*args, **kwargs)
+
+    def get_policy(self, request):
+        policy = self.get_object()
+        serializer = self.get_serializer(policy, context={'request': request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def patch_policy(self, request):
+        policy = self.get_object()
+        serializer = self.get_serializer(policy, data=request.data, partial=True, context={'request': request})
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class PrivacyPolicyView(SingletonPolicyAPIView):
+    serializer_class = PrivacyPolicySerializer
+    model = PrivacyPolicy
+    document_name = 'privacy policy'
+
+    @swagger_auto_schema(
+        operation_id='chat_privacy_policy_retrieve',
+        operation_description='Get the current privacy policy content',
+        responses={200: PrivacyPolicySerializer},
+        tags=['Policies'],
+    )
+    def get(self, request):
+        return self.get_policy(request)
+
+    @swagger_auto_schema(
+        operation_id='chat_privacy_policy_partial_update',
+        operation_description='Update the privacy policy content',
+        request_body=PrivacyPolicySerializer,
+        responses={200: PrivacyPolicySerializer},
+        tags=['Policies'],
+    )
+    def patch(self, request):
+        return self.patch_policy(request)
+
+
+class TermsAndConditionsView(SingletonPolicyAPIView):
+    serializer_class = TermsAndConditionsSerializer
+    model = TermsAndConditions
+    document_name = 'terms and conditions'
+
+    @swagger_auto_schema(
+        operation_id='chat_terms_and_conditions_retrieve',
+        operation_description='Get the current terms and conditions content',
+        responses={200: TermsAndConditionsSerializer},
+        tags=['Policies'],
+    )
+    def get(self, request):
+        return self.get_policy(request)
+
+    @swagger_auto_schema(
+        operation_id='chat_terms_and_conditions_partial_update',
+        operation_description='Update the terms and conditions content',
+        request_body=TermsAndConditionsSerializer,
+        responses={200: TermsAndConditionsSerializer},
+        tags=['Policies'],
+    )
+    def patch(self, request):
+        return self.patch_policy(request)
 
 
 class UserNotificationListView(APIView):
