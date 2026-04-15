@@ -1,6 +1,13 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import ConversationViewSet, UserNotificationListView
+from .views import (
+    ConversationViewSet,
+    UserNotificationListView,
+    NotificationUnreadCountView,
+    NotificationMarkAllReadView,
+    NotificationMarkReadView,
+    NotificationDeleteView,
+)
 from .call_views import (
     UniversalCallPackageViewSet,
     CallPackageViewSet,
@@ -21,5 +28,9 @@ router.register(r'payouts', ListenerPayoutViewSet, basename='listener-payout')
 
 urlpatterns = [
     path('notifications/', UserNotificationListView.as_view(), name='user-notifications'),
+    path('notifications/unread-count/', NotificationUnreadCountView.as_view(), name='notification-unread-count'),
+    path('notifications/mark-all-read/', NotificationMarkAllReadView.as_view(), name='notification-mark-all-read'),
+    path('notifications/<int:notification_id>/mark-read/', NotificationMarkReadView.as_view(), name='notification-mark-read'),
+    path('notifications/<int:notification_id>/', NotificationDeleteView.as_view(), name='notification-delete'),
     path('', include(router.urls)),
 ]

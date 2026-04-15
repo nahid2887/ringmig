@@ -31,6 +31,7 @@ class UserNotificationListView(APIView):
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
+        operation_id='chat_notifications_list',
         operation_description='Get notification history for authenticated user',
         manual_parameters=[
             openapi.Parameter(
@@ -81,6 +82,96 @@ class UserNotificationListView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
+class NotificationUnreadCountView(APIView):
+    """Return unread notification count for authenticated user."""
+
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        operation_id='chat_notifications_unread_count',
+        operation_description='Get unread notification count for authenticated user',
+        responses={
+            200: openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    'unread_count': openapi.Schema(type=openapi.TYPE_INTEGER),
+                },
+            )
+        },
+        tags=['Notifications']
+    )
+    def get(self, request):
+        unread_count = Notification.objects.filter(user=request.user, is_read=False).count()
+        return Response({'unread_count': unread_count}, status=status.HTTP_200_OK)
+
+
+class NotificationMarkAllReadView(APIView):
+    """Mark all notifications as read for authenticated user."""
+
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        operation_id='chat_notifications_mark_all_read',
+        operation_description='Mark all unread notifications as read for authenticated user',
+        responses={
+            200: openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    'success': openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                    'updated_count': openapi.Schema(type=openapi.TYPE_INTEGER),
+                },
+            )
+        },
+        tags=['Notifications']
+    )
+    def post(self, request):
+        updated_count = Notification.objects.filter(user=request.user, is_read=False).update(is_read=True)
+        return Response(
+            {
+                'success': True,
+                'updated_count': updated_count,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class NotificationMarkReadView(APIView):
+    """Mark one notification as read for authenticated user."""
+
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        operation_id='chat_notifications_mark_read',
+        operation_description='Mark a single notification as read',
+        responses={200: NotificationSerializer},
+        tags=['Notifications']
+    )
+    def patch(self, request, notification_id):
+        notification = get_object_or_404(Notification, id=notification_id, user=request.user)
+        if not notification.is_read:
+            notification.is_read = True
+            notification.save(update_fields=['is_read'])
+        serializer = NotificationSerializer(notification)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class NotificationDeleteView(APIView):
+    """Delete one notification for authenticated user."""
+
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        operation_id='chat_notifications_delete',
+        operation_description='Delete a single notification from authenticated user history',
+        responses={204: 'Notification deleted successfully'},
+        tags=['Notifications']
+    )
+    def delete(self, request, notification_id):
+        notification = get_object_or_404(Notification, id=notification_id, user=request.user)
+        notification.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class ConversationViewSet(viewsets.ModelViewSet):
