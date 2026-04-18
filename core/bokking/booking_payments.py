@@ -3,6 +3,7 @@ import logging
 
 import stripe
 from django.conf import settings
+from django.utils import timezone
 
 from payment.models import StripeCustomer
 
@@ -97,6 +98,81 @@ def confirm_session_booking_payment(payment_intent_id):
         'amount': payment_intent.amount / 100,
         'currency': payment_intent.currency,
     }
+
+
+def process_stripe_refund(booking, amount=None):
+    """
+    Process Stripe refund for a booking.
+    Refunds to the original payment card.
+    
+    Args:
+        booking: SessionBooking instance with transaction_id (payment_intent_id)
+        amount: Optional partial refund amount in dollars (None for full refund)
+    
+    Returns:
+        dict with success status, refund_id, and amount
+    """
+    payment_intent_id = booking.transaction_id
+    
+    if not payment_intent_id:
+        logger.error('No PaymentIntent found for booking %s', booking.id)
+        return {
+            "success": False,
+            "message": "No PaymentIntent found for this booking"
+        }
+    
+    try:
+        # Determine refund amount
+        if amount:
+            refund_amount = int(float(amount) * 100)  # dollars → cents
+        else:
+            refund_amount = None  # full refund
+
+        # Create refund using payment_intent (requested flow)
+        refund_data = {
+            "payment_intent": payment_intent_id,
+        }
+
+        if refund_amount:
+            refund_data["amount"] = refund_amount
+
+        refund = stripe.Refund.create(**refund_data)
+
+        logger.info(
+            'Stripe refund created for booking %s: refund_id=%s, payment_intent=%s, amount=%s',
+            booking.id,
+            refund.id,
+            payment_intent_id,
+            amount or 'full',
+        )
+
+        # Store refund details in booking
+        booking.stripe_refund_id = refund.id
+        booking.refund_amount = amount if amount else booking.price
+        booking.refunded_at = timezone.now()
+        booking.save(update_fields=['stripe_refund_id', 'refund_amount', 'refunded_at'])
+
+        return {
+            "success": True,
+            "refund_id": refund.id,
+            "amount": amount if amount else float(booking.price),
+            "currency": "usd",
+            "status": getattr(refund, 'status', None),
+        }
+    
+    except stripe.error.InvalidRequestError as e:
+        logger.error('Stripe refund error for booking %s: %s', booking.id, str(e))
+        return {
+            "success": False,
+            "message": f"Stripe error: {str(e)}"
+        }
+    
+    except Exception as e:
+        logger.error('Unexpected error processing refund for booking %s: %s', booking.id, str(e))
+        return {
+            "success": False,
+            "message": str(e)
+        }
 
 
 def _get_or_create_customer(user):

@@ -291,6 +291,26 @@ class SessionBooking(models.Model):
         blank=True,
         help_text='When listener earnings were released to balance'
     )
+    
+    # Refund tracking fields
+    stripe_refund_id = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        help_text='Stripe refund ID when booking is cancelled'
+    )
+    refund_amount = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text='Amount refunded to payment card'
+    )
+    refunded_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text='When refund was processed to payment card'
+    )
 
     class Meta:
         verbose_name = 'Session Booking'

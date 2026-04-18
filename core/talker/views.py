@@ -406,7 +406,6 @@ class TalkerBalanceViewSet(viewsets.ReadOnlyModelViewSet):
         ).aggregate(total=Sum('listener_amount'))['total'] or 0
 
         return Response({
-            'available_balance': str(balance.available_balance),
             'total_earned': str(balance.total_earned),
             'total_refunded': str(balance.total_refunded),
             'last_updated': balance.updated_at,

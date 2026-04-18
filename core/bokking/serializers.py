@@ -172,13 +172,15 @@ class SessionBookingSerializer(serializers.ModelSerializer):
             'package', 'package_details', 'booking_date', 'start_time', 'end_time',
             'duration_minutes', 'buffer_time_minutes', 'status', 'payment_link',
             'transaction_id', 'price', 'app_fee', 'listener_amount',
-            'created_at', 'updated_at', 'payment_completed_at'
+            'created_at', 'updated_at', 'payment_completed_at',
+            'stripe_refund_id', 'refund_amount', 'refunded_at'
         ]
         read_only_fields = [
             'id', 'talker', 'talker_name', 'talker_email', 'listener_name', 'listener_email', 'end_time',
             'duration_minutes', 'buffer_time_minutes', 'status', 'payment_link',
             'transaction_id', 'price', 'app_fee', 'listener_amount',
-            'created_at', 'updated_at', 'payment_completed_at'
+            'created_at', 'updated_at', 'payment_completed_at',
+            'stripe_refund_id', 'refund_amount', 'refunded_at'
         ]
 
     def get_talker_name(self, obj):

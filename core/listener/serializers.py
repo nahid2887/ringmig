@@ -301,3 +301,47 @@ class ListenerBalanceSerializer(serializers.ModelSerializer):
             'updated_at',
         ]
         read_only_fields = fields
+
+
+class ListenerTransactionSerializer(serializers.Serializer):
+    """Serializer for listener transaction history items."""
+
+    transaction_id = serializers.CharField(read_only=True)
+    source = serializers.CharField(read_only=True)
+    title = serializers.CharField(read_only=True)
+    counterparty_name = serializers.CharField(read_only=True)
+    counterparty_email = serializers.EmailField(read_only=True)
+    amount = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    currency = serializers.CharField(read_only=True)
+    status = serializers.CharField(read_only=True)
+    transaction_type = serializers.CharField(read_only=True)
+    transaction_at = serializers.DateTimeField(read_only=True)
+    reference_id = serializers.CharField(read_only=True)
+
+
+class RefundBookingSerializer(serializers.Serializer):
+    """Input serializer for listener refunding a booking."""
+    booking_id = serializers.CharField(
+        required=True,
+        help_text='UUID of the SessionBooking to refund'
+    )
+    refund_amount = serializers.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        required=False,
+        allow_null=True,
+        help_text='Refund amount in USD. If not provided, use refund_percent or full amount'
+    )
+    refund_percent = serializers.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        required=False,
+        allow_null=True,
+        help_text='Refund as percentage (0-100). If not provided, use refund_amount or full amount'
+    )
+    reason = serializers.CharField(
+        max_length=500,
+        required=False,
+        allow_blank=True,
+        help_text='Reason for refund'
+    )

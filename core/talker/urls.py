@@ -1,10 +1,9 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import TalkerProfileViewSet, TalkerBalanceViewSet
+from .views import TalkerProfileViewSet
 
 router = DefaultRouter()
 router.register(r'profiles', TalkerProfileViewSet, basename='talker-profile')
-router.register(r'balance', TalkerBalanceViewSet, basename='talker-balance')
 
 # Custom URL patterns
 urlpatterns = [

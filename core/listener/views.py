@@ -15,7 +15,9 @@ from .models import ListenerProfile, ListenerRating, ListenerBalance, ListenerBl
 from .serializers import (ListenerProfileSerializer, ListenerListSerializer, ListenerRatingSerializer,
                          BlockTalkerSerializer, UnblockTalkerSerializer, BlockedTalkerListSerializer,
                          ListenerCallAttemptSerializer, ListenerCallAttemptDetailSerializer,
-                         ListenerBalanceSerializer)
+                         ListenerBalanceSerializer, ListenerTransactionSerializer,
+                         RefundBookingSerializer)
+from bokking.booking_payments import process_stripe_refund
 
 
 class IsListenerUser(IsAuthenticated):
@@ -599,23 +601,137 @@ class ListenerBalanceViewSet(viewsets.ReadOnlyModelViewSet):
             }
         })
 
+    @swagger_auto_schema(
+        operation_description='Get listener transaction history (listener only)',
+        manual_parameters=[
+            openapi.Parameter('page', openapi.IN_QUERY, type=openapi.TYPE_INTEGER, description='Page number (default: 1)'),
+            openapi.Parameter('page_size', openapi.IN_QUERY, type=openapi.TYPE_INTEGER, description='Items per page (default: 20, max: 100)'),
+        ],
+        responses={200: openapi.Response('Paginated transaction history for listener')},
+        tags=['Listener Balance']
+    )
+    @action(detail=False, methods=['get'], url_path='transaction-history')
+    def transaction_history(self, request):
+        """Get transaction history for the authenticated listener only."""
+        user = request.user
+
+        if user.user_type != 'listener':
+            return Response(
+                {'error': 'Only listeners can view transaction history'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        from chat.call_models import CallPackage
+        from bokking.models import SessionBooking
+
+        transactions = []
+
+        # Call package earnings transactions
+        call_packages = CallPackage.objects.filter(
+            listener=user,
+            status__in=['confirmed', 'used', 'completed']
+        ).select_related('talker').order_by('-created_at')
+
+        for pkg in call_packages:
+            talker_name = pkg.talker.full_name or pkg.talker.email
+            transaction_at = pkg.used_at or pkg.ended_at or pkg.purchased_at or pkg.created_at
+            transactions.append({
+                'transaction_id': f'call_{pkg.id}',
+                'source': 'call',
+                'title': f'Session with {talker_name}',
+                'counterparty_name': talker_name,
+                'counterparty_email': pkg.talker.email,
+                'amount': pkg.listener_amount,
+                'currency': 'USD',
+                'status': 'completed',
+                'transaction_type': 'credit',
+                'transaction_at': transaction_at,
+                'reference_id': str(pkg.id),
+            })
+
+        # Booking earnings transactions (released only)
+        bookings = SessionBooking.objects.filter(
+            listener=user,
+            status='completed',
+            listener_earnings_released=True,
+        ).select_related('talker').order_by('-listener_earnings_released_at', '-updated_at')
+
+        for booking in bookings:
+            talker_name = booking.talker.full_name or booking.talker.email
+            transaction_at = booking.listener_earnings_released_at or booking.updated_at
+            transactions.append({
+                'transaction_id': f'booking_{booking.id}',
+                'source': 'booking',
+                'title': f'Session with {talker_name}',
+                'counterparty_name': talker_name,
+                'counterparty_email': booking.talker.email,
+                'amount': booking.listener_amount,
+                'currency': 'USD',
+                'status': 'completed',
+                'transaction_type': 'credit',
+                'transaction_at': transaction_at,
+                'reference_id': str(booking.id),
+            })
+
+        transactions.sort(key=lambda row: row['transaction_at'], reverse=True)
+
+        # Simple pagination
+        page = request.query_params.get('page', 1)
+        page_size = request.query_params.get('page_size', 20)
+        try:
+            page = max(1, int(page))
+            page_size = max(1, min(int(page_size), 100))
+        except (ValueError, TypeError):
+            page = 1
+            page_size = 20
+
+        total_count = len(transactions)
+        start = (page - 1) * page_size
+        end = start + page_size
+        paginated_transactions = transactions[start:end]
+
+        serializer = ListenerTransactionSerializer(paginated_transactions, many=True)
+        total_pages = (total_count + page_size - 1) // page_size if total_count else 0
+
+        return Response(
+            {
+                'count': total_count,
+                'page': page,
+                'page_size': page_size,
+                'total_pages': total_pages,
+                'results': serializer.data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    @swagger_auto_schema(
+        operation_description='Refund booking earnings and automatically refund talker payment card',
+        request_body=RefundBookingSerializer,
+        responses={200: 'Refund processed successfully', 400: 'Bad request', 404: 'Booking not found'},
+        tags=['Listener Balance']
+    )
     @action(detail=False, methods=['post'], url_path='refund-booking')
     def refund_booking(self, request):
         """
-        Refund booking earnings from listener balance back to talker balance.
+        Refund booking earnings from listener balance back to talker.
+        Automatically refunds to talker's original payment card via Stripe.
 
         Payload:
         {
             "booking_id": "<uuid>",
-            "amount": "10.00",            # optional
-            "refund_percent": "50"        # optional (0-100)
+            "refund_amount": "10.00",    # optional - exact amount in USD
+            "refund_percent": "5",       # optional - as percentage (0-100)
+            "reason": "Changed my mind"  # optional
         }
 
         Rules:
-        - Only listener who owns the booking can refund.
-        - If neither amount nor refund_percent is provided, full listener_amount is refunded.
-        - Refund always deducts from listener available_balance.
-        - Refunded amount is credited to talker balance as refund credit.
+        - Only listener who accepted the booking can refund.
+        - Provide EITHER refund_amount OR refund_percent, not both.
+        - If neither provided: refunds full remaining refundable amount.
+        - Refund amount deducted from listener available_balance.
+        - Refund automatically processed to talker's payment card via Stripe.
+        - Talker also receives refund credit to available balance.
+        - Cannot refund more than listener earned (100% max).
         """
         if request.user.user_type != 'listener':
             return Response(
@@ -624,21 +740,20 @@ class ListenerBalanceViewSet(viewsets.ReadOnlyModelViewSet):
             )
 
         booking_id = request.data.get('booking_id')
-        amount_raw = request.data.get('amount')
+        refund_amount_raw = request.data.get('refund_amount')
         refund_percent_raw = request.data.get('refund_percent')
 
         if not booking_id:
             return Response({'error': 'booking_id is required'}, status=status.HTTP_400_BAD_REQUEST)
 
-        if amount_raw is not None and refund_percent_raw is not None:
+        if refund_amount_raw is not None and refund_percent_raw is not None:
             return Response(
-                {'error': 'Provide either amount or refund_percent, not both'},
+                {'error': 'Provide either refund_amount or refund_percent, not both'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         try:
             from bokking.models import SessionBooking
-            from talker.models import TalkerBalance
 
             with transaction.atomic():
                 booking = SessionBooking.objects.select_for_update().select_related('talker', 'listener').get(
@@ -678,19 +793,22 @@ class ListenerBalanceViewSet(viewsets.ReadOnlyModelViewSet):
                         status=status.HTTP_400_BAD_REQUEST,
                     )
 
-                # Determine refund amount.
+                # Determine refund amount based on input
                 if refund_percent_raw is not None:
+                    # Calculate percentage of the REMAINING refundable amount
                     percent = Decimal(str(refund_percent_raw))
                     if percent <= 0 or percent > 100:
                         return Response(
                             {'error': 'refund_percent must be greater than 0 and less than or equal to 100'},
                             status=status.HTTP_400_BAD_REQUEST,
                         )
+                    # Percentage is of the max_refundable (original listener earnings), not remaining
                     refund_amount = (max_refundable * percent / Decimal('100')).quantize(Decimal('0.01'))
-                elif amount_raw is not None:
-                    refund_amount = Decimal(str(amount_raw)).quantize(Decimal('0.01'))
+                elif refund_amount_raw is not None:
+                    refund_amount = Decimal(str(refund_amount_raw)).quantize(Decimal('0.01'))
                 else:
-                    refund_amount = max_refundable
+                    # Default: full refund of remaining refundable amount
+                    refund_amount = remaining_refundable
 
                 if refund_amount <= 0:
                     return Response(
@@ -724,17 +842,21 @@ class ListenerBalanceViewSet(viewsets.ReadOnlyModelViewSet):
                         status=status.HTTP_400_BAD_REQUEST,
                     )
 
-                listener_balance.deduct(refund_amount)
+                # Process Stripe refund to talker's payment card
+                stripe_refund = process_stripe_refund(booking, amount=float(refund_amount))
 
-                talker_balance, _ = TalkerBalance.objects.select_for_update().get_or_create(
-                    talker=booking.talker,
-                    defaults={
-                        'available_balance': Decimal('0.00'),
-                        'total_earned': Decimal('0.00'),
-                        'total_refunded': Decimal('0.00'),
-                    },
-                )
-                talker_balance.add_refund_credit(refund_amount)
+                if not stripe_refund or not stripe_refund.get('success'):
+                    return Response(
+                        {
+                            'error': 'Stripe refund failed. No balance changes were applied.',
+                            'booking_id': str(booking.id),
+                            'stripe_error': stripe_refund.get('message') if isinstance(stripe_refund, dict) else 'Unknown Stripe refund error',
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                # Deduct from listener balance
+                listener_balance.deduct(refund_amount)
 
                 refund_tracker.total_refunded = (already_refunded + refund_amount).quantize(Decimal('0.01'))
                 refund_tracker.save(update_fields=['total_refunded', 'updated_at'])
@@ -750,7 +872,7 @@ class ListenerBalanceViewSet(viewsets.ReadOnlyModelViewSet):
                         'timestamp': timezone.now().isoformat(),
                     }
 
-                    # Notify listener who performed the refund.
+                    # Notify listener who performed the refund
                     async_to_sync(channel_layer.group_send)(
                         f'user_{booking.listener.id}_notifications',
                         {
@@ -759,12 +881,16 @@ class ListenerBalanceViewSet(viewsets.ReadOnlyModelViewSet):
                         },
                     )
 
-                    # Notify talker who receives refund credit.
+                    # Notify talker who receives card refund
+                    refund_message = f'You received a refund of ${refund_amount} for booking {booking.id}'
+                    if stripe_refund and stripe_refund.get('success'):
+                        refund_message += ' (processed to your payment card)'
+                    
                     async_to_sync(channel_layer.group_send)(
                         f'user_{booking.talker.id}_notifications',
                         {
                             **event_payload,
-                            'message': f'You received a refund credit of ${refund_amount} for booking {booking.id}',
+                            'message': refund_message,
                         },
                     )
 
@@ -773,17 +899,12 @@ class ListenerBalanceViewSet(viewsets.ReadOnlyModelViewSet):
                         'message': 'Refund processed successfully',
                         'booking_id': str(booking.id),
                         'refund_amount': str(refund_amount),
+                        'stripe_refund': stripe_refund if stripe_refund and stripe_refund.get('success') else None,
                         'already_refunded': str(refund_tracker.total_refunded),
                         'remaining_refundable': str((max_refundable - refund_tracker.total_refunded).quantize(Decimal('0.01'))),
                         'listener_balance': {
                             'available_balance': str(listener_balance.available_balance),
                             'total_earned': str(listener_balance.total_earned),
-                        },
-                        'talker_balance': {
-                            'talker_id': booking.talker.id,
-                            'available_balance': str(talker_balance.available_balance),
-                            'total_earned': str(talker_balance.total_earned),
-                            'total_refunded': str(talker_balance.total_refunded),
                         },
                     },
                     status=status.HTTP_200_OK,
@@ -791,7 +912,7 @@ class ListenerBalanceViewSet(viewsets.ReadOnlyModelViewSet):
 
         except (InvalidOperation, ValueError):
             return Response(
-                {'error': 'Invalid amount/refund_percent format'},
+                {'error': 'Invalid amount format'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         except SessionBooking.DoesNotExist:

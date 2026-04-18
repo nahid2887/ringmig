@@ -24,8 +24,7 @@ from .serializers import (
     ConfirmSessionBookingPaymentSerializer,
     RejectSessionBookingSerializer,
 )
-from .booking_payments import create_session_booking_payment_intent, confirm_session_booking_payment
-from talker.models import TalkerBalance
+from .booking_payments import create_session_booking_payment_intent, confirm_session_booking_payment, process_stripe_refund
 from listener.models import ListenerBalance
 
 User = get_user_model()
@@ -626,22 +625,25 @@ class SessionBookingViewSet(viewsets.ModelViewSet):
                 )
 
             refund_amount = Decimal('0.00')
+            stripe_refund = None
             listener_reversed = Decimal('0.00')
-            talker_balance = None
 
             if booking.payment_completed_at is not None:
-                refund_amount = booking.listener_amount
+                refund_amount = booking.price
+                
+                # Process Stripe refund to payment card
+                stripe_refund = process_stripe_refund(booking, amount=float(refund_amount))
 
-                talker_balance, _ = TalkerBalance.objects.select_for_update().get_or_create(
-                    talker=booking.talker,
-                    defaults={
-                        'available_balance': Decimal('0.00'),
-                        'total_earned': Decimal('0.00'),
-                        'total_refunded': Decimal('0.00'),
-                    },
-                )
-                talker_balance.add_refund_credit(refund_amount)
-
+                if not stripe_refund or not stripe_refund.get('success'):
+                    return Response(
+                        {
+                            'error': 'Stripe refund failed. Booking was not deleted.',
+                            'booking_id': str(booking.id),
+                            'stripe_error': stripe_refund.get('message') if isinstance(stripe_refund, dict) else 'Unknown Stripe refund error',
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                
                 # If this booking already credited listener earnings, reverse that credit.
                 if booking.listener_earnings_released:
                     listener_balance, _ = ListenerBalance.objects.select_for_update().get_or_create(
@@ -675,7 +677,7 @@ class SessionBookingViewSet(viewsets.ModelViewSet):
                 f'user_{talker.id}_notifications',
                 {
                     **base_event,
-                    'message': f'Booking {booking_id} was deleted. Refund credited: ${refund_amount}',
+                    'message': f'Booking {booking_id} was deleted. Refund processed: ${refund_amount}',
                 },
             )
 
@@ -692,12 +694,9 @@ class SessionBookingViewSet(viewsets.ModelViewSet):
                 'message': 'Booking deleted successfully.',
                 'booking_id': booking_id,
                 'refund': {
-                    'amount_credited_to_talker_balance': str(refund_amount),
-                    'talker_balance': {
-                        'available_balance': str(talker_balance.available_balance) if talker_balance else '0.00',
-                        'total_earned': str(talker_balance.total_earned) if talker_balance else '0.00',
-                        'total_refunded': str(talker_balance.total_refunded) if talker_balance else '0.00',
-                    },
+                    'stripe_refund': stripe_refund if stripe_refund and stripe_refund.get('success') else None,
+                    'stripe_refund_id': stripe_refund.get('refund_id') if stripe_refund and stripe_refund.get('success') else None,
+                    'amount_refunded_to_card': str(refund_amount) if stripe_refund and stripe_refund.get('success') else '0.00',
                     'listener_balance_reversed': str(listener_reversed),
                 },
             },
@@ -845,7 +844,7 @@ class SessionBookingViewSet(viewsets.ModelViewSet):
         )
 
     @swagger_auto_schema(
-        operation_description='Reject a paid booking before it starts and refund the listener amount to the talker balance',
+        operation_description='Reject a paid booking before it starts and refund the amount to the original payment card',
         request_body=RejectSessionBookingSerializer,
         responses={200: SessionBookingSerializer, 400: 'Bad request', 403: 'Forbidden', 404: 'Not found'},
         tags=['Booking Purchase']
@@ -887,17 +886,18 @@ class SessionBookingViewSet(viewsets.ModelViewSet):
                         status=status.HTTP_400_BAD_REQUEST,
                     )
 
-                talker_balance, _ = TalkerBalance.objects.select_for_update().get_or_create(
-                    talker=booking.talker,
-                    defaults={
-                        'available_balance': Decimal('0.00'),
-                        'total_earned': Decimal('0.00'),
-                        'total_refunded': Decimal('0.00'),
-                    },
-                )
-
                 refund_amount = booking.listener_amount
-                talker_balance.add_refund_credit(refund_amount)
+                stripe_refund = process_stripe_refund(booking, amount=float(refund_amount))
+
+                if not stripe_refund or not stripe_refund.get('success'):
+                    return Response(
+                        {
+                            'error': 'Stripe refund failed. Booking was not rejected.',
+                            'booking_id': str(booking.id),
+                            'stripe_error': stripe_refund.get('message') if isinstance(stripe_refund, dict) else 'Unknown Stripe refund error',
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
 
                 booking.status = 'cancelled'
                 booking.cancellation_reason = f'Rejected by listener: {reason}. {notes}'.strip()
@@ -905,16 +905,12 @@ class SessionBookingViewSet(viewsets.ModelViewSet):
 
                 return Response(
                     {
-                        'message': 'Booking rejected successfully and refunded to talker balance.',
+                        'message': 'Booking rejected successfully and refunded to payment card.',
                         'booking': SessionBookingSerializer(booking).data,
                         'refund': {
                             'amount': str(refund_amount),
-                            'credited_to': booking.talker.email,
-                            'talker_balance': {
-                                'available_balance': str(talker_balance.available_balance),
-                                'total_earned': str(talker_balance.total_earned),
-                                'total_refunded': str(talker_balance.total_refunded),
-                            },
+                            'refunded_to': booking.talker.email,
+                            'stripe_refund': stripe_refund,
                         },
                     },
                     status=status.HTTP_200_OK,
