@@ -114,7 +114,16 @@ class ListenerProfile(models.Model):
         return f"Listener: {self.user.email}"
     
     def get_full_name(self):
-        return f"{self.first_name} {self.last_name}".strip() or self.user.email
+        invalid_tokens = {'undefined', 'null', 'none'}
+        first = (self.first_name or '').strip()
+        last = (self.last_name or '').strip()
+
+        if first.lower() in invalid_tokens:
+            first = ''
+        if last.lower() in invalid_tokens:
+            last = ''
+
+        return f"{first} {last}".strip() or self.user.email
     
     def update_average_rating(self):
         """Calculate and update average rating from all ratings."""

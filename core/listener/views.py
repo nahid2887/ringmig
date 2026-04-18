@@ -90,6 +90,19 @@ class ListenerProfileViewSet(viewsets.ModelViewSet):
             return ListenerProfile.objects.filter(is_available=True)
         return ListenerProfile.objects.all()
 
+    def _sync_user_full_name(self, listener_profile):
+        """Keep auth profile full_name in sync with listener profile names."""
+        combined = listener_profile.get_full_name()
+
+        if listener_profile.user.full_name != combined:
+            listener_profile.user.full_name = combined
+            listener_profile.user.save(update_fields=['full_name', 'updated_at'])
+
+    def perform_update(self, serializer):
+        """Override default update to ensure auth profile name stays synced."""
+        listener_profile = serializer.save()
+        self._sync_user_full_name(listener_profile)
+
     def destroy(self, request, *args, **kwargs):
         """Delete listener profile and deactivate the associated user account.
         
@@ -139,7 +152,7 @@ class ListenerProfileViewSet(viewsets.ModelViewSet):
         serializer = ListenerProfileSerializer(listener, context={'request': request})
         return Response(serializer.data)
 
-    @action(detail=False, methods=['get', 'put', 'patch'], permission_classes=[IsListenerUser], parser_classes=[MultiPartParser, FormParser])
+    @action(detail=False, methods=['get', 'put', 'patch'], permission_classes=[IsListenerUser], parser_classes=[JSONParser, MultiPartParser, FormParser])
     def my_profile(self, request):
         """Get or update the authenticated listener user's profile."""
         try:
@@ -155,9 +168,44 @@ class ListenerProfileViewSet(viewsets.ModelViewSet):
             return Response(serializer.data)
 
         elif request.method in ['PUT', 'PATCH']:
-            serializer = self.get_serializer(listener_profile, data=request.data, partial=True, context={'request': request})
+            payload = request.data.copy() if hasattr(request.data, 'copy') else dict(request.data)
+            invalid_tokens = {'undefined', 'null', 'none'}
+
+            # Normalize direct first_name/last_name values from frontend placeholders.
+            for key in ['first_name', 'last_name']:
+                if key in payload:
+                    value = str(payload.get(key, '')).strip()
+                    if value.lower() in invalid_tokens:
+                        payload[key] = ''
+
+            # Accept full_name as input and split into first_name/last_name.
+            full_name_input = str(payload.get('full_name', '')).strip()
+            if full_name_input.lower() in invalid_tokens:
+                full_name_input = ''
+
+            if full_name_input:
+                parts = full_name_input.split(None, 1)
+                first_name = parts[0]
+                last_name = parts[1] if len(parts) > 1 else ''
+
+                if first_name.lower() in invalid_tokens:
+                    first_name = ''
+                if last_name.lower() in invalid_tokens:
+                    last_name = ''
+
+                if not str(payload.get('first_name', '')).strip():
+                    payload['first_name'] = first_name
+                if not str(payload.get('last_name', '')).strip():
+                    payload['last_name'] = last_name
+
+            # Serializer exposes full_name as read-only output, so drop incoming key.
+            if 'full_name' in payload:
+                payload.pop('full_name')
+
+            serializer = self.get_serializer(listener_profile, data=payload, partial=True, context={'request': request})
             if serializer.is_valid():
                 serializer.save()
+                self._sync_user_full_name(listener_profile)
                 # Refresh to get updated image
                 listener_profile.refresh_from_db()
                 response_data = serializer.data

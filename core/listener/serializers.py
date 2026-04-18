@@ -153,6 +153,8 @@ class ListenerReviewDisplaySerializer(serializers.ModelSerializer):
 
 class ListenerProfileSerializer(serializers.ModelSerializer):
     """Serializer for listener profile with personal information."""
+    first_name = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    last_name = serializers.CharField(write_only=True, required=False, allow_blank=True)
     full_name = serializers.SerializerMethodField()
     user_email = serializers.CharField(source='user.email', read_only=True)
     profile_image_url = serializers.SerializerMethodField()
