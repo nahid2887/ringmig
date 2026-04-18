@@ -21,11 +21,11 @@ else:
 
 
 # Quick-start development settings - unsuitable for production
-SECRET_KEY = 'django-insecure-21rj=5m8b3dom#cz^u9jqut(s5!im4a@j039u@!asro8tntz5='
+SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-21rj=5m8b3dom#cz^u9jqut(s5!im4a@j039u@!asro8tntz5=')
 
-DEBUG = True
+DEBUG = os.getenv('DEBUG', 'True').lower() == 'true'
 
-ALLOWED_HOSTS = ['*']
+ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '*').split(',')
 
 
 # Application definition
@@ -89,12 +89,25 @@ WSGI_APPLICATION = 'core.wsgi.application'
 ASGI_APPLICATION = 'core.asgi.application'
 
 # Channel Layers Configuration
-# Using InMemoryChannelLayer for local development
-CHANNEL_LAYERS = {
-    'default': {
-        'BACKEND': 'channels.layers.InMemoryChannelLayer'
-    },
-}
+REDIS_HOST = os.getenv('REDIS_HOST', '')
+REDIS_PORT = os.getenv('REDIS_PORT', '6379')
+
+if REDIS_HOST:
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels_redis.core.RedisChannelLayer',
+            'CONFIG': {
+                'hosts': [(REDIS_HOST, int(REDIS_PORT))],
+            },
+        },
+    }
+else:
+    # Fallback for local development without Redis.
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels.layers.InMemoryChannelLayer'
+        },
+    }
 
 
 

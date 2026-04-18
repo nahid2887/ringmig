@@ -36,10 +36,11 @@ services:
     command: bash -c "cd /app/core && echo '[startup] running migrations...' && python manage.py migrate && echo '[startup] collecting static files...' && python manage.py collectstatic --noinput && echo '[startup] starting daphne on 0.0.0.0:8005' && exec python -m daphne -b 0.0.0.0 -p 8005 core.asgi:application"
     ports:
       - "8005:8005"
+    env_file:
+      - .env
     environment:
       DEBUG: "True"
       SECRET_KEY: "django-insecure-21rj=5m8b3dom#cz^u9jqut(s5!im4a@j039u@!asro8tntz5="
-      DATABASE_URL: "postgresql://ringmig_user:ringmig_password_123@db:5432/ringmig_db"
       DB_ENGINE: "django.db.backends.postgresql"
       DB_NAME: "ringmig_db"
       DB_USER: "ringmig_user"
