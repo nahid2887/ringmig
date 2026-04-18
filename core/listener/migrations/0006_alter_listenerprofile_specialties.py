@@ -10,6 +10,19 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
+        migrations.RunSQL(
+            sql="""
+                UPDATE listener_listenerprofile
+                SET specialties = CASE
+                    WHEN specialties IS NULL OR btrim(specialties) = '' OR lower(btrim(specialties)) IN ('undefined', 'null', 'none')
+                        THEN '[]'
+                    WHEN left(ltrim(specialties), 1) IN ('[', '{')
+                        THEN specialties
+                    ELSE to_json(regexp_split_to_array(specialties, '\\s*,\\s*'))::text
+                END;
+            """,
+            reverse_sql=migrations.RunSQL.noop,
+        ),
         migrations.AlterField(
             model_name='listenerprofile',
             name='specialties',
