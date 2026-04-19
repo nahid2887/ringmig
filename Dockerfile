@@ -25,7 +25,7 @@ RUN pip install --upgrade pip && \
 COPY . .
 
 # Expose port
-EXPOSE 8005
+EXPOSE 8006
 
 # Run migrations and start Daphne ASGI server on container startup
-CMD ["bash", "-c", "cd /app/core && echo '[startup] running migrations...' && python manage.py migrate && echo '[startup] collecting static files...' && python manage.py collectstatic --noinput && echo '[startup] starting daphne on 0.0.0.0:8005' && exec python -m daphne -b 0.0.0.0 -p 8005 core.asgi:application"]
+CMD ["bash", "-c", "cd /app/core && echo '[startup] running migrations...' && python manage.py migrate && echo '[startup] collecting static files...' && python manage.py collectstatic --noinput && echo '[startup] starting daphne on 0.0.0.0:8006' && exec python -m daphne -b 0.0.0.0 -p 8006 core.asgi:application"]
