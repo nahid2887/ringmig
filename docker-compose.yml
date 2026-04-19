@@ -33,7 +33,7 @@ services:
   web:
     build: .
     container_name: ringmig_web
-    command: bash -c "cd /app/core && echo '[startup] running migrations...' && python manage.py migrate && echo '[startup] collecting static files...' && python manage.py collectstatic --noinput && echo '[startup] starting daphne on 0.0.0.0:8006' && exec python -m daphne -b 0.0.0.0 -p 8006 core.asgi:application"
+    command: bash -c "cd /app/core && echo '[startup] running migrations...' && python manage.py migrate && echo '[startup] collecting static files...' && python manage.py collectstatic --noinput && echo '[startup] starting daphne on 87.106.74.69:8006' && exec python -m daphne -b 87.106.74.69 -p 8006 core.asgi:application"
     ports:
       - "8006:8006"
     env_file:
