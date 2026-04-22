@@ -228,6 +228,8 @@ CORS_ALLOWED_ORIGINS = [
     "http://127.0.0.1:8005",
     "http://localhost:5174",
     "http://localhost:5174",
+    'https://dev.backend.ring-mig.com',
+    'http://dev.backend.ring-mig.com',
 ]
 CORS_ALLOW_CREDENTIALS = True
 
