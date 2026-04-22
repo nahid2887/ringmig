@@ -617,6 +617,9 @@ class CallPackageViewSet(viewsets.ModelViewSet):
                     listener_user=call_package.listener,
                     expire_time_in_seconds=7200  # 2 hours
                 )
+                ws_scheme = 'wss' if request.is_secure() else 'ws'
+                ws_path = f'/ws/call/{session.id}/'
+                ws_full_url = f'{ws_scheme}://{request.get_host()}{ws_path}?token='
                 
                 return Response({
                     'message': 'Call session created. Connect to WebSocket to start call.',
@@ -636,8 +639,8 @@ class CallPackageViewSet(viewsets.ModelViewSet):
                         'expires_at': zim_tokens['expires_at'],
                         'expire_time_seconds': zim_tokens['expire_time_seconds']
                     },
-                    'websocket_url': f'/ws/call/{session.id}/',
-                    'websocket_full_url': f'ws://10.10.13.27:8005/ws/call/{session.id}/?token=YOUR_JWT_TOKEN',
+                    'websocket_url': ws_path,
+                    'websocket_full_url': ws_full_url,
                     'call_package_id': call_package.id,
                     'duration_minutes': call_package.package.duration_minutes
                 }, status=status.HTTP_201_CREATED)
@@ -960,6 +963,9 @@ class CallSessionViewSet(viewsets.ReadOnlyModelViewSet):
                     listener_user=call_package.listener,
                     expire_time_in_seconds=7200  # 2 hours
                 )
+                ws_scheme = 'wss' if request.is_secure() else 'ws'
+                ws_path = f'/ws/call/{session.id}/'
+                ws_full_url = f'{ws_scheme}://{request.get_host()}{ws_path}?token='
                 
                 # Agora system commented out
                 tokens = {}
@@ -1011,8 +1017,8 @@ class CallSessionViewSet(viewsets.ReadOnlyModelViewSet):
                     #     'expires_in': tokens['expires_in'],
                     #     'video_config': agora_call_manager.get_call_config(package_type)
                     # },
-                    'websocket_url': f'/ws/call/{session.id}/',
-                    'websocket_full_url': f'ws://10.10.13.27:8005/ws/call/{session.id}/?token=',
+                    'websocket_url': ws_path,
+                    'websocket_full_url': ws_full_url,
                     'call_package_id': call_package.id,
                     'duration_minutes': call_package.package.duration_minutes
                 }, status=status.HTTP_201_CREATED)
