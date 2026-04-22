@@ -15,6 +15,7 @@ import string
 import requests
 import os
 from datetime import timedelta
+from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from .serializers import (
     UserRegistrationSerializer,
@@ -105,6 +106,7 @@ def generate_otp():
 class OTPRequestView(APIView):
     """API endpoint for requesting OTP during registration."""
     permission_classes = [AllowAny]
+    authentication_classes = [] 
 
     @swagger_auto_schema(
         operation_description="Request OTP for user registration",
@@ -154,6 +156,7 @@ class OTPRequestView(APIView):
 class OTPVerificationView(APIView):
     """API endpoint for verifying OTP and completing registration."""
     permission_classes = [AllowAny]
+    authentication_classes = [] 
 
     @swagger_auto_schema(
         operation_description="Verify OTP and complete user registration",
@@ -218,6 +221,7 @@ class OTPVerificationView(APIView):
 class UserRegistrationView(APIView):
     """API endpoint for user registration - sends OTP to email."""
     permission_classes = [AllowAny]
+    authentication_classes = [] 
 
     @swagger_auto_schema(
         operation_description="Register a new user - sends OTP to email",
@@ -267,6 +271,7 @@ class UserRegistrationView(APIView):
 class UserLoginView(APIView):
     """API endpoint for user login."""
     permission_classes = [AllowAny]
+    authentication_classes = [] 
 
     @swagger_auto_schema(
         operation_description="Login with email and password",
@@ -410,6 +415,7 @@ class ChangePasswordView(APIView):
 class ForgotPasswordRequestView(APIView):
     """API endpoint for requesting password reset OTP."""
     permission_classes = [AllowAny]
+    authentication_classes = [] 
 
     @swagger_auto_schema(
         operation_description="Request password reset OTP - send OTP to email",
@@ -456,6 +462,7 @@ class ForgotPasswordRequestView(APIView):
 class VerifyPasswordResetOTPView(APIView):
     """API endpoint for verifying password reset OTP."""
     permission_classes = [AllowAny]
+    authentication_classes = [] 
 
     @swagger_auto_schema(
         operation_description="Verify password reset OTP",
@@ -500,6 +507,7 @@ class VerifyPasswordResetOTPView(APIView):
 class ChangePasswordAfterResetView(APIView):
     """API endpoint for changing password after OTP verification."""
     permission_classes = [AllowAny]
+    authentication_classes = [] 
 
     @swagger_auto_schema(
         operation_description="Change password after OTP verification",
