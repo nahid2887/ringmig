@@ -113,8 +113,20 @@ else:
 
 # Database
 DB_ENGINE = os.getenv('DB_ENGINE', 'django.db.backends.postgresql')
+DB_NAME = os.getenv('DB_NAME', 'ringmig_db')
+DB_USER = os.getenv('DB_USER', 'ringmig_user')
+DB_PASSWORD = os.getenv('DB_PASSWORD', 'ringmig_password_123')
+DB_HOST = os.getenv('DB_HOST', 'db')
+DB_PORT = os.getenv('DB_PORT', '5432')
 
-if DB_ENGINE == 'django.db.backends.sqlite3':
+use_sqlite = DB_ENGINE == 'django.db.backends.sqlite3' and not any([
+    DB_HOST,
+    DB_USER,
+    DB_PASSWORD,
+    DB_PORT,
+])
+
+if use_sqlite:
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.sqlite3',
@@ -125,11 +137,11 @@ else:
     DATABASES = {
         'default': {
             'ENGINE': DB_ENGINE,
-            'NAME': os.getenv('DB_NAME', 'ringmig_db'),
-            'USER': os.getenv('DB_USER', 'ringmig_user'),
-            'PASSWORD': os.getenv('DB_PASSWORD', 'ringmig_password_123'),
-            'HOST': os.getenv('DB_HOST', 'db'),
-            'PORT': os.getenv('DB_PORT', '5432'),
+            'NAME': DB_NAME,
+            'USER': DB_USER,
+            'PASSWORD': DB_PASSWORD,
+            'HOST': DB_HOST,
+            'PORT': DB_PORT,
         }
     }
 
