@@ -3,6 +3,28 @@
 from django.db import migrations, models
 
 
+def normalize_specialties_postgres_only(apps, schema_editor):
+    if schema_editor.connection.vendor != 'postgresql':
+        return
+
+    schema_editor.execute(
+        """
+            UPDATE listener_listenerprofile
+            SET specialties = CASE
+                WHEN specialties IS NULL OR btrim(specialties) = '' OR lower(btrim(specialties)) IN ('undefined', 'null', 'none')
+                    THEN '[]'
+                WHEN left(ltrim(specialties), 1) IN ('[', '{')
+                    THEN specialties
+                ELSE to_json(regexp_split_to_array(specialties, '\\s*,\\s*'))::text
+            END;
+        """
+    )
+
+
+def noop_reverse(apps, schema_editor):
+    return
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -10,18 +32,9 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.RunSQL(
-            sql="""
-                UPDATE listener_listenerprofile
-                SET specialties = CASE
-                    WHEN specialties IS NULL OR btrim(specialties) = '' OR lower(btrim(specialties)) IN ('undefined', 'null', 'none')
-                        THEN '[]'
-                    WHEN left(ltrim(specialties), 1) IN ('[', '{')
-                        THEN specialties
-                    ELSE to_json(regexp_split_to_array(specialties, '\\s*,\\s*'))::text
-                END;
-            """,
-            reverse_sql=migrations.RunSQL.noop,
+        migrations.RunPython(
+            normalize_specialties_postgres_only,
+            noop_reverse,
         ),
         migrations.AlterField(
             model_name='listenerprofile',
