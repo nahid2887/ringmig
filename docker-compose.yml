@@ -47,8 +47,7 @@ services:
 
   frontend:
     build:
-      context: ./frontend_folder # Change this to your frontend directory
-      dockerfile: Dockerfile
+      context: /root/frontend/ring_mig  # <--- Change this line to the exact path
     container_name: ringmig_frontend
     restart: always
     # No ports needed here, Nginx will talk to it internally
