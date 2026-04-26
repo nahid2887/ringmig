@@ -98,8 +98,8 @@ def create_call_package_payment_intent(call_package, payment_method_id=None):
                 'quantity': 1,
             }],
             mode='payment',
-            success_url='https://soft-gumdrop-80d399.netlify.app/dashboard/talker/payment-success-start-call',
-            cancel_url='https://soft-gumdrop-80d399.netlify.app/payment-cancelled',
+            success_url='https://www.ring-mig.com/dashboard/talker/payment-success-start-call',
+            cancel_url='https://www.ring-mig.com/payment-cancelled',
             metadata={
                 'call_package_id': call_package.id,
                 'payment_intent_id': payment_intent.id,
