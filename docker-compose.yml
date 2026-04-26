@@ -42,7 +42,7 @@ services:
     volumes:
       - .:/app
       - media_data:/app/core/media
-      - static_data:/app/core/static
+      - static_data:/app/core/staticfiles
     depends_on:
       db:
         condition: service_healthy
