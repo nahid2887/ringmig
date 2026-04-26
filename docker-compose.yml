@@ -8,9 +8,6 @@ services:
       POSTGRES_DB: ringmig_db
       POSTGRES_USER: ringmig_user
       POSTGRES_PASSWORD: ringmig_password_123
-      POSTGRES_HOST_AUTHENTICATION_METHOD: md5
-    ports:
-      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -22,8 +19,6 @@ services:
   redis:
     image: redis:7-alpine
     container_name: ringmig_redis
-    ports:
-      - "6380:6379"
     healthcheck:
       test: [ "CMD", "redis-cli", "ping" ]
       interval: 10s
@@ -33,31 +28,30 @@ services:
   web:
     build: .
     container_name: ringmig_web
-    command: bash -c "cd /app/core && echo '[startup] running migrations...' && python manage.py migrate && echo '[startup] collecting static files...' && python manage.py collectstatic --noinput && echo '[startup] starting daphne on 0.0.0.0:8006' && exec python -m daphne -b 0.0.0.0 -p 8006 core.asgi:application"
-    ports:
-      - "8006:8006"
+    command: bash -c "python manage.py migrate && python manage.py collectstatic --noinput && gunicorn core.wsgi:application --bind 0.0.0.0:8006"
     env_file:
       - .env
     environment:
-      DEBUG: "True"
-      SECRET_KEY: "django-insecure-21rj=5m8b3dom#cz^u9jqut(s5!im4a@j039u@!asro8tntz5="
-      DB_ENGINE: "django.db.backends.postgresql"
-      DB_NAME: "ringmig_db"
-      DB_USER: "ringmig_user"
-      DB_PASSWORD: "ringmig_password_123"
+      DEBUG: "False"
       DB_HOST: "db"
-      DB_PORT: "5432"
       REDIS_HOST: "redis"
-      REDIS_PORT: "6379"
     volumes:
       - .:/app
       - media_data:/app/core/media
+      - static_data:/app/core/static
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
-    restart: on-failure
+
+  frontend:
+    build:
+      context: ./frontend_folder # Change this to your frontend directory
+      dockerfile: Dockerfile
+    container_name: ringmig_frontend
+    restart: always
+    # No ports needed here, Nginx will talk to it internally
 
   nginx:
     image: nginx:alpine
@@ -69,12 +63,14 @@ services:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
       - ./certbot/www:/var/www/certbot:ro
       - /etc/letsencrypt:/etc/letsencrypt:ro
+      - static_data:/app/backend_static:ro # To serve Django static files
+      - media_data:/app/backend_media:ro   # To serve Django media files
     depends_on:
       - web
+      - frontend
     restart: unless-stopped
 
 volumes:
   postgres_data:
-    driver: local
   media_data:
-    driver: local
+  static_data:
