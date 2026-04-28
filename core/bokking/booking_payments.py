@@ -45,7 +45,13 @@ def create_session_booking_payment_intent(booking, payment_method_id=None):
         payment_intent = stripe.PaymentIntent.create(**payment_intent_data)
 
         # Get the frontend URL from settings for Stripe redirect URLs
+        # Format: https://example.com/dashboard/talker
         frontend_url = getattr(settings, 'FRONTEND_URL2', 'http://localhost:5174/dashboard/talker')
+        # Build base URL for cancel redirect (remove /dashboard/talker)
+        if '/dashboard/talker' in frontend_url:
+            base_url = frontend_url.rsplit('/dashboard/talker', 1)[0]
+        else:
+            base_url = frontend_url.rsplit('/', 1)[0] if '/' in frontend_url else frontend_url
         
         checkout_session = stripe.checkout.Session.create(
             customer=stripe_customer.stripe_customer_id,
@@ -66,7 +72,7 @@ def create_session_booking_payment_intent(booking, payment_method_id=None):
             }],
             mode='payment',
             success_url=f'{frontend_url}/payment-success-booking',
-            cancel_url=f'{frontend_url.rsplit("/", 1)[0]}/payment-cancelled',
+            cancel_url=f'{base_url}/payment-cancelled',
             metadata={
                 'session_booking_id': str(booking.id),
                 'payment_intent_id': payment_intent.id,

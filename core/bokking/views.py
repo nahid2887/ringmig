@@ -7,6 +7,7 @@ from django.utils import timezone
 from datetime import datetime, timedelta
 from decimal import Decimal
 from django.db import transaction
+import logging
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 from asgiref.sync import async_to_sync
@@ -1598,10 +1599,20 @@ class SessionBookingViewSet(viewsets.ModelViewSet):
             listener_amount=package.listener_amount,
         )
 
-        payment_data = create_session_booking_payment_intent(
-            booking,
-            payment_method_id=payload.get('payment_method_id')
-        )
+        try:
+            payment_data = create_session_booking_payment_intent(
+                booking,
+                payment_method_id=payload.get('payment_method_id')
+            )
+        except Exception as e:
+            # Delete the booking if payment creation fails
+            booking.delete()
+            logger = logging.getLogger(__name__)
+            logger.error(f'Payment creation failed for booking: {str(e)}')
+            return Response(
+                {'error': f'Payment processing failed: {str(e)}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
         if payment_data.get('status') == 'succeeded':
             booking.status = 'completed'
