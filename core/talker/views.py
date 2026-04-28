@@ -357,6 +357,89 @@ class TalkerProfileViewSet(viewsets.ModelViewSet):
         return Response(serializer.data)
 
 
+    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated, IsTalkerUser], url_path='favorite_listeners')
+    def favorite_listeners(self, request):
+        """Get talker's list of favorite listeners.
+
+        URL: /api/talker/profiles/favorite_listeners/
+        """
+        favorites = FavoriteListener.objects.filter(talker=request.user)
+        serializer = FavoriteListenerSerializer(favorites, many=True, context={'request': request})
+        return Response({
+            'count': favorites.count(),
+            'results': serializer.data
+        })
+
+    @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated, IsTalkerUser], url_path='add_favorite')
+    def add_favorite(self, request):
+        """Add a listener to favorites.
+
+        URL: /api/talker/profiles/add_favorite/
+        Request body: { "listener_id": 4 }
+        """
+        serializer = AddFavoriteListenerSerializer(data=request.data)
+        if serializer.is_valid():
+            listener_id = serializer.validated_data['listener_id']
+
+            try:
+                listener = ListenerProfile.objects.get(user_id=listener_id)
+            except ListenerProfile.DoesNotExist:
+                return Response(
+                    {'error': f'Listener with ID {listener_id} not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            favorite, created = FavoriteListener.objects.get_or_create(
+                talker=request.user,
+                listener=listener
+            )
+
+            if not created:
+                return Response(
+                    {'message': 'Listener is already in your favorites'},
+                    status=status.HTTP_200_OK
+                )
+
+            return Response(
+                {'message': 'Listener added to favorites', 'data': FavoriteListenerSerializer(favorite, context={'request': request}).data},
+                status=status.HTTP_201_CREATED
+            )
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated, IsTalkerUser], url_path='remove_favorite')
+    def remove_favorite(self, request):
+        """Remove a listener from favorites.
+
+        URL: /api/talker/profiles/remove_favorite/
+        Request body: { "listener_id": 4 }
+        """
+        serializer = AddFavoriteListenerSerializer(data=request.data)
+        if serializer.is_valid():
+            listener_id = serializer.validated_data['listener_id']
+
+            try:
+                listener = ListenerProfile.objects.get(user_id=listener_id)
+            except ListenerProfile.DoesNotExist:
+                return Response(
+                    {'error': f'Listener with ID {listener_id} not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            try:
+                favorite = FavoriteListener.objects.get(talker=request.user, listener=listener)
+                favorite.delete()
+                return Response(
+                    {'message': 'Listener removed from favorites'},
+                    status=status.HTTP_200_OK
+                )
+            except FavoriteListener.DoesNotExist:
+                return Response(
+                    {'error': 'This listener is not in your favorites'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
 class TalkerBalanceViewSet(viewsets.ReadOnlyModelViewSet):
     """ViewSet for viewing talker balance (read-only)."""
 
