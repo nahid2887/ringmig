@@ -125,12 +125,12 @@ class CallSessionSerializer(serializers.ModelSerializer):
             'id', 'talker', 'talker_email', 'listener', 'listener_email',
             'listener_name', 'status', 'total_minutes_purchased', 
             'minutes_used', 'remaining_minutes', 'elapsed_minutes',
-            'started_at', 'ended_at', 'last_warning_sent',
+            'started_at', 'ended_at', 'last_warning_sent', 'call_type',
             'created_at', 'updated_at'
         ]
         read_only_fields = [
             'id', 'status', 'minutes_used', 'started_at', 
-            'ended_at', 'last_warning_sent', 'created_at', 'updated_at'
+            'ended_at', 'last_warning_sent', 'call_type', 'created_at', 'updated_at'
         ]
     
     def get_listener_name(self, obj):
