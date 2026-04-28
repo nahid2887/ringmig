@@ -259,8 +259,8 @@ class ZIMTokenGenerator:
 
 
 # Default ZIM token generator instance using your credentials
-ZIM_APP_ID = 529008210
-ZIM_SERVER_SECRET = "d8ed02e8a99645ae521ae471f88bdfeb"
+ZIM_APP_ID = 1582778301
+ZIM_SERVER_SECRET = "140681a600d91db15eddb05ba75bb0b3"
 
 zim_token_generator = ZIMTokenGenerator(ZIM_APP_ID, ZIM_SERVER_SECRET)
 
