@@ -235,12 +235,13 @@ class SessionBooking(models.Model):
     )
 
     payment_link = models.URLField(
+        max_length=2000,
         null=True,
         blank=True,
         help_text='Payment link for the booking'
     )
     transaction_id = models.CharField(
-        max_length=100,
+        max_length=255,
         null=True,
         blank=True,
         help_text='Payment transaction ID'
