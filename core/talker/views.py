@@ -844,7 +844,7 @@ class TalkerBalanceViewSet(viewsets.ReadOnlyModelViewSet):
             'results': serializer.data
         })
     
-    @action(detail=False, methods=['get'], permission_classes=[IsTalkerUser])
+    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated, IsTalkerUser])
     def favorite_listeners(self, request):
         """Get talker's list of favorite listeners.
         
@@ -857,7 +857,7 @@ class TalkerBalanceViewSet(viewsets.ReadOnlyModelViewSet):
             'results': serializer.data
         })
 
-    @action(detail=False, methods=['post'], permission_classes=[IsTalkerUser])
+    @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated, IsTalkerUser])
     def add_favorite(self, request):
         """Add a listener to favorites.
         
@@ -894,7 +894,7 @@ class TalkerBalanceViewSet(viewsets.ReadOnlyModelViewSet):
             )
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-    @action(detail=False, methods=['post'], permission_classes=[IsTalkerUser])
+    @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated, IsTalkerUser])
     def remove_favorite(self, request):
         """Remove a listener from favorites.
         
