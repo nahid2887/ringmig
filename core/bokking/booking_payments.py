@@ -44,6 +44,9 @@ def create_session_booking_payment_intent(booking, payment_method_id=None):
 
         payment_intent = stripe.PaymentIntent.create(**payment_intent_data)
 
+        # Get the frontend URL from settings for Stripe redirect URLs
+        frontend_url = getattr(settings, 'FRONTEND_URL2', 'http://localhost:5174/dashboard/talker')
+        
         checkout_session = stripe.checkout.Session.create(
             customer=stripe_customer.stripe_customer_id,
             payment_method_types=['card'],
@@ -62,8 +65,8 @@ def create_session_booking_payment_intent(booking, payment_method_id=None):
                 'quantity': 1,
             }],
             mode='payment',
-            success_url='http://localhost:5174/dashboard/talker/payment-success-booking',
-            cancel_url='http://localhost:5174/payment-cancelled',
+            success_url=f'{frontend_url}/payment-success-booking',
+            cancel_url=f'{frontend_url.rsplit("/", 1)[0]}/payment-cancelled',
             metadata={
                 'session_booking_id': str(booking.id),
                 'payment_intent_id': payment_intent.id,
