@@ -301,8 +301,8 @@ STRIPE_APP_FEE_PERCENTAGE = 10.0  # 10% commission for the app
 STRIPE_LISTENER_PERCENTAGE = 90.0  # 90% goes to listener
 
 # Frontend Configuration
-FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5173')
-FRONTEND_URL2 = os.getenv('FRONTEND_URL2', 'http://localhost:5174/dashboard/talker')
+FRONTEND_URL = os.getenv('FRONTEND_URL', 'https://www.ring-mig.com/')
+FRONTEND_URL2 = os.getenv('FRONTEND_URL2', 'https://www.ring-mig.com/dashboard/talker')
 
 # Agora Configuration for Real-Time Communication
 AGORA_APP_ID = os.getenv('AGORA_APP_ID', '4cd28b722093446199a5db6a89ffda4f')
