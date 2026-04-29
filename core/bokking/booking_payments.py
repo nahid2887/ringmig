@@ -46,7 +46,7 @@ def create_session_booking_payment_intent(booking, payment_method_id=None):
 
         # Get the frontend URL from settings for Stripe redirect URLs
         # Format: https://example.com/dashboard/talker
-        frontend_url = getattr(settings, 'FRONTEND_URL2', 'http://localhost:5174/dashboard/talker')
+        frontend_url = getattr(settings, 'FRONTEND_URL2', 'https://www.ring-mig.com/dashboard/talker')
         # Build base URL for cancel redirect (remove /dashboard/talker)
         if '/dashboard/talker' in frontend_url:
             base_url = frontend_url.rsplit('/dashboard/talker', 1)[0]
