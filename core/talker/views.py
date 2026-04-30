@@ -180,7 +180,7 @@ class TalkerProfileViewSet(viewsets.ModelViewSet):
             openapi.Parameter('page', openapi.IN_QUERY, type=openapi.TYPE_INTEGER, 
                             description='Page number (default: 1)'),
             openapi.Parameter('page_size', openapi.IN_QUERY, type=openapi.TYPE_INTEGER, 
-                            description='Items per page (default: 12)')
+                            description='Items per page (default: 8)')
         ],
         responses={200: openapi.Response('Paginated list of available listeners')},
         tags=['Talker Browse Listeners']
@@ -192,14 +192,14 @@ class TalkerProfileViewSet(viewsets.ModelViewSet):
         Filters listeners who speak the same language as the talker.
         Supports search by first_name or last_name.
         Excludes listeners who have blocked this talker.
-        Returns paginated results (12 per page by default).
+        Returns paginated results (8 per page by default).
         
         Query Parameters:
         - search: Search by first_name or last_name (case-insensitive)
         - page: Page number (default: 1)
-        - page_size: Items per page (default: 12, max: 50)
+        - page_size: Items per page (default: 8, max: 50)
         
-        Example: /api/talker/profiles/available_listeners/?search=john&page=1&page_size=12
+        Example: /api/talker/profiles/available_listeners/?search=john&page=1&page_size=8
         """
         from django.db.models import Q
         from rest_framework.pagination import PageNumberPagination
@@ -237,7 +237,7 @@ class TalkerProfileViewSet(viewsets.ModelViewSet):
         
         # Paginate results
         paginator = PageNumberPagination()
-        paginator.page_size = int(request.query_params.get('page_size', 12))
+        paginator.page_size = int(request.query_params.get('page_size', 8))
         paginator.page_size = min(paginator.page_size, 50)  # Max 50 per page
         
         page = paginator.paginate_queryset(listeners, request)
