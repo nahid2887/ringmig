@@ -173,28 +173,36 @@ class TalkerProfileViewSet(viewsets.ModelViewSet):
         })
 
     @swagger_auto_schema(
-        operation_description="Get all available listeners only with optional search",
+        operation_description="Get all available listeners only with optional search and pagination",
         manual_parameters=[
             openapi.Parameter('search', openapi.IN_QUERY, type=openapi.TYPE_STRING, 
-                            description='Search by listener first_name or last_name')
+                            description='Search by listener first_name or last_name'),
+            openapi.Parameter('page', openapi.IN_QUERY, type=openapi.TYPE_INTEGER, 
+                            description='Page number (default: 1)'),
+            openapi.Parameter('page_size', openapi.IN_QUERY, type=openapi.TYPE_INTEGER, 
+                            description='Items per page (default: 12)'),
         ],
-        responses={200: openapi.Response('List of available listeners')},
+        responses={200: openapi.Response('Paginated list of available listeners')},
         tags=['Talker Browse Listeners']
     )
     @action(detail=False, methods=['get'], permission_classes=[IsTalkerUser])
     def available_listeners(self, request):
-        """Get all available listeners only.
+        """Get all available listeners only with pagination.
         
         Filters listeners who speak the same language as the talker.
         Supports search by first_name or last_name.
         Excludes listeners who have blocked this talker.
+        Returns paginated results (12 per page by default).
         
         Query Parameters:
         - search: Search by first_name or last_name (case-insensitive)
+        - page: Page number (default: 1)
+        - page_size: Items per page (default: 12, max: 50)
         
-        Example: /api/talker/profiles/available_listeners/?search=john
+        Example: /api/talker/profiles/available_listeners/?search=john&page=1&page_size=12
         """
         from django.db.models import Q
+        from rest_framework.pagination import PageNumberPagination
         
         # Get list of listener IDs that have blocked this talker
         blocked_by = ListenerBlockedTalker.objects.filter(
@@ -227,9 +235,26 @@ class TalkerProfileViewSet(viewsets.ModelViewSet):
             if listener.languages and talker_language in listener.languages
         ]
         
+        # Paginate results
+        paginator = PageNumberPagination()
+        paginator.page_size = int(request.query_params.get('page_size', 12))
+        paginator.page_size = min(paginator.page_size, 50)  # Max 50 per page
+        
+        page = paginator.paginate_queryset(listeners, request)
+        if page is not None:
+            serializer = ListenerListSerializer(page, many=True, context={'request': request})
+            # Get paginated response with next/previous links
+            paginated_response = paginator.get_paginated_response(serializer.data)
+            # Add search query to the response
+            paginated_response.data['search_query'] = search_query if search_query else None
+            return paginated_response
+        
+        # Fallback if pagination failed (shouldn't happen)
         serializer = ListenerListSerializer(listeners, many=True, context={'request': request})
         return Response({
             'count': len(listeners),
+            'next': None,
+            'previous': None,
             'results': serializer.data,
             'search_query': search_query if search_query else None
         })
