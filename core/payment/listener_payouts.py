@@ -39,7 +39,7 @@ def transfer_to_listener_stripe_account(listener, amount, source_type, source_id
         from payment.models import StripeListenerAccount
         
         try:
-            stripe_account = StripeListenerAccount.objects.get(listener=listener)
+            stripe_account = StripeListenerAccount.objects.get(listener=listener, is_enabled=True)
             
             # Verify account is enabled and ideally verified
             if not stripe_account.is_enabled:
@@ -95,8 +95,8 @@ def transfer_to_listener_stripe_account(listener, amount, source_type, source_id
             
         except StripeListenerAccount.DoesNotExist:
             logger.warning(
-                f"No Stripe Connect account found for listener {listener.email}. "
-                f"Listener must connect Stripe account to receive payouts."
+                f"No enabled Stripe Connect account found for listener {listener.email}. "
+                f"Listener must connect or enable a Stripe account to receive payouts."
             )
             return {
                 'success': False,
