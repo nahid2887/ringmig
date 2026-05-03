@@ -484,24 +484,16 @@ class Tip(models.Model):
     def confirm_payment(self):
         """Mark tip as succeeded and update listener balance."""
         from django.utils import timezone
-        from listener.models import ListenerBalance
-        
         if self.status != 'pending':
             return False
-            
+
+        # Only update tip status here. Do NOT modify ListenerBalance.
+        # Payouts should be transferred directly to Stripe Connect accounts
+        # and any bookkeeping of transfers is handled elsewhere.
         with transaction.atomic():
-            # Update tip status
             self.status = 'succeeded'
             self.paid_at = timezone.now()
             self.save(update_fields=['status', 'paid_at', 'updated_at'])
-            
-            # Update listener balance
-            balance, created = ListenerBalance.objects.get_or_create(
-                listener=self.listener,
-                defaults={'available_balance': Decimal('0.00'), 'total_earned': Decimal('0.00')}
-            )
-            balance.add_earnings(self.listener_amount)
-            
             return True
     
     def mark_failed(self, reason=''):

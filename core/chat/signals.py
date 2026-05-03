@@ -86,18 +86,10 @@ def mark_payout_earned_on_call_completion(sender, instance, created, update_fiel
                 payout.status = 'earned'
                 payout.notes = f'Completed call with {instance.talker.email}'
                 payout.save(update_fields=['status', 'notes', 'updated_at'])
-                
-                # Update listener's available balance
-                try:
-                    balance, _ = ListenerBalance.objects.get_or_create(listener=instance.listener)
-                    balance.available_balance += payout.amount
-                    balance.total_earned += payout.amount
-                    balance.save(update_fields=['available_balance', 'total_earned', 'updated_at'])
-                    logger.info(f"✓ Updated balance for {instance.listener.email}: +${payout.amount}, New available: ${balance.available_balance}")
-                except Exception as e:
-                    logger.error(f"Error updating balance for listener {instance.listener.id}: {str(e)}")
-                
-                logger.info(f"✓ Payout marked as earned for {instance.listener.email}: ${payout.amount}")
+                # Do NOT update ListenerBalance here. Payouts are handled by
+                # direct Stripe transfers when configured; keep payout record
+                # but skip internal balance crediting.
+                logger.info(f"Marked payout #{payout.id} as earned for {instance.listener.email} (no balance change)")
         
         except Exception as e:
             logger.error(f"Error marking payout as earned for call package {instance.id}: {str(e)}")

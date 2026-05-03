@@ -71,25 +71,15 @@ def sync_payout_earnings_to_balance(sender, instance, created, update_fields, **
         return
         
     try:
-        # Get or create balance account
-        balance, created = ListenerBalance.objects.get_or_create(
-            listener=instance.listener,
-            defaults={'available_balance': Decimal('0.00'), 'total_earned': Decimal('0.00')}
-        )
-        
-        # Add earnings to balance (only if not an extension for base packages)
-        # Extensions are handled separately and added immediately when confirmed
-        if not instance.is_extension:
-            balance.add_earnings(instance.amount)
-            logger.info(f"💰 Synced ${instance.amount} to {instance.listener.email}'s balance (Payout #{instance.id} earned)")
-        else:
-            logger.info(f"⏱️ Skipping extension payout #{instance.id} - handled separately")
-            
-        # Mark as processed to avoid double-syncing
+        # NOTE: Disabled automatic syncing of ListenerPayout -> ListenerBalance.
+        # Earnings should be transferred directly to listeners' Stripe Connect
+        # accounts rather than credited to internal balance. Keep the payout
+        # record for bookkeeping but do not modify ListenerBalance here.
+        logger.info(f"Skipping balance sync for payout #{instance.id} (earned={instance.amount}) - direct Stripe payouts enabled")
         instance._earnings_synced = True
-        
+
     except Exception as e:
-        logger.error(f"Error syncing payout #{instance.id} to balance: {str(e)}")
+        logger.error(f"Error marking payout #{instance.id} as synced (no balance change): {str(e)}")
 
 
 @receiver(post_save, sender='chat.CallPackage')
@@ -118,17 +108,7 @@ def add_listener_earnings_on_extension(sender, instance, created, **kwargs):
     if hasattr(instance, '_extension_earnings_processed') and instance._extension_earnings_processed:
         return
     
-    # Get or create balance
-    balance, created = ListenerBalance.objects.get_or_create(
-        listener=instance.listener,
-        defaults={'available_balance': Decimal('0.00'), 'total_earned': Decimal('0.00')}
-    )
-    
-    # Add extension earnings
-    listener_amount = instance.listener_amount
-    balance.add_earnings(listener_amount)
-    
-    # Mark as processed
+    # Do NOT add extension earnings to ListenerBalance. Extensions are
+    # handled via direct Stripe payouts when configured.
     instance._extension_earnings_processed = True
-    
-    logger.info(f"⏱️ Added ${listener_amount} to {instance.listener.email} for extension package {instance.id}")
+    logger.info(f"Skipping extension earnings credit to balance for package {instance.id} (listener={instance.listener.email})")
