@@ -17,6 +17,16 @@ def create_session_booking_payment_intent(booking, payment_method_id=None):
         if payment_method_id in ['', None, 'string', 'null']:
             payment_method_id = None
 
+        from payment.models import StripeListenerAccount
+
+        try:
+            listener_account = StripeListenerAccount.objects.get(
+                listener=booking.listener,
+                is_enabled=True,
+            )
+        except StripeListenerAccount.DoesNotExist as exc:
+            raise Exception('Listener has not connected an active Stripe account for automatic payout') from exc
+
         stripe_customer = _get_or_create_customer(booking.talker)
         amount_cents = int(booking.price * 100)
 
@@ -31,6 +41,8 @@ def create_session_booking_payment_intent(booking, payment_method_id=None):
                 'booking_date': booking.booking_date.isoformat(),
                 'start_time': booking.start_time.strftime('%H:%M:%S'),
                 'duration_minutes': booking.duration_minutes,
+                'payout_mode': 'listener_transfer',
+                'listener_stripe_account_id': listener_account.stripe_account_id,
             },
             'description': (
                 f"Booking: {booking.duration_minutes} min with {booking.listener.email} "
@@ -76,6 +88,8 @@ def create_session_booking_payment_intent(booking, payment_method_id=None):
             metadata={
                 'session_booking_id': str(booking.id),
                 'payment_intent_id': payment_intent.id,
+                'payout_mode': 'listener_transfer',
+                'listener_stripe_account_id': listener_account.stripe_account_id,
             },
         )
 

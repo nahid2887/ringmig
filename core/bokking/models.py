@@ -246,6 +246,12 @@ class SessionBooking(models.Model):
         blank=True,
         help_text='Payment transaction ID'
     )
+    stripe_transfer_id = models.CharField(
+        max_length=255,
+        blank=True,
+        default='',
+        help_text='Stripe transfer ID for automatic listener payout'
+    )
 
     price = models.DecimalField(
         max_digits=10,

@@ -1235,6 +1235,7 @@ class StripeWebhookView(APIView):
             if session_booking_id:
                 from bokking.models import SessionBooking
                 from bokking.views import broadcast_availability_update
+                from payment.listener_payouts import transfer_to_listener_stripe_account
 
                 try:
                     session_booking = SessionBooking.objects.select_related('listener').get(id=session_booking_id)
@@ -1250,7 +1251,19 @@ class StripeWebhookView(APIView):
                     session_booking.status = 'completed'
                     session_booking.transaction_id = payment_intent_id or session_booking.transaction_id
                     session_booking.payment_completed_at = timezone.now()
-                    session_booking.save(update_fields=['status', 'transaction_id', 'payment_completed_at', 'updated_at'])
+
+                    if not session_booking.stripe_transfer_id:
+                        transfer_result = transfer_to_listener_stripe_account(
+                            listener=session_booking.listener,
+                            amount=session_booking.listener_amount,
+                            source_type='session_booking',
+                            source_id=session_booking.id,
+                            description=f"Session booking payment for {session_booking.listener.email}",
+                        )
+                        if transfer_result['success']:
+                            session_booking.stripe_transfer_id = transfer_result['transfer_id']
+
+                    session_booking.save(update_fields=['status', 'transaction_id', 'payment_completed_at', 'stripe_transfer_id', 'updated_at'])
 
                     if hasattr(session_booking.listener, 'booking_availability'):
                         broadcast_availability_update(session_booking.listener.booking_availability)
@@ -1615,6 +1628,7 @@ class StripeWebhookView(APIView):
             if session_booking_id:
                 from bokking.models import SessionBooking
                 from bokking.views import broadcast_availability_update
+                from payment.listener_payouts import transfer_to_listener_stripe_account
 
                 try:
                     session_booking = SessionBooking.objects.select_related('listener').get(id=session_booking_id)
@@ -1630,7 +1644,19 @@ class StripeWebhookView(APIView):
                     session_booking.status = 'completed'
                     session_booking.transaction_id = payment_intent['id']
                     session_booking.payment_completed_at = timezone.now()
-                    session_booking.save(update_fields=['status', 'transaction_id', 'payment_completed_at', 'updated_at'])
+
+                    if not session_booking.stripe_transfer_id:
+                        transfer_result = transfer_to_listener_stripe_account(
+                            listener=session_booking.listener,
+                            amount=session_booking.listener_amount,
+                            source_type='session_booking',
+                            source_id=session_booking.id,
+                            description=f"Session booking payment for {session_booking.listener.email}",
+                        )
+                        if transfer_result['success']:
+                            session_booking.stripe_transfer_id = transfer_result['transfer_id']
+
+                    session_booking.save(update_fields=['status', 'transaction_id', 'payment_completed_at', 'stripe_transfer_id', 'updated_at'])
 
                     if hasattr(session_booking.listener, 'booking_availability'):
                         broadcast_availability_update(session_booking.listener.booking_availability)
