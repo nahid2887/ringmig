@@ -25,6 +25,17 @@ def create_call_package_payment_intent(call_package, payment_method_id=None):
         dict: Payment intent response with client_secret and payment link
     """
     try:
+        from payment.models import StripeListenerAccount
+
+        try:
+            listener_account = StripeListenerAccount.objects.get(
+                listener=call_package.listener,
+                is_enabled=True,
+            )
+            destination_account_id = listener_account.stripe_account_id
+        except StripeListenerAccount.DoesNotExist:
+            raise Exception('Listener has not connected an active Stripe account')
+
         # Get or create Stripe customer (same as payment app)
         from payment.models import StripeCustomer
         
@@ -72,6 +83,12 @@ def create_call_package_payment_intent(call_package, payment_method_id=None):
                 'duration_minutes': call_package.package.duration_minutes,
                 'app_fee': str(call_package.app_fee),
                 'listener_amount': str(call_package.listener_amount),
+                'payout_mode': 'destination_charge',
+                'listener_stripe_account_id': destination_account_id,
+            },
+            'application_fee_amount': int(call_package.app_fee * 100),
+            'transfer_data': {
+                'destination': destination_account_id,
             },
             'description': f'Call Package: {call_package.package.name} ({call_package.package.duration_minutes} min)',
         }
@@ -105,12 +122,21 @@ def create_call_package_payment_intent(call_package, payment_method_id=None):
                 'type': 'call_package',
                 'call_package_id': call_package.id,
                 'payment_intent_id': payment_intent.id,
+                'payout_mode': 'destination_charge',
+                'listener_stripe_account_id': destination_account_id,
             },
             payment_intent_data={
                 'metadata': {
                     'type': 'call_package',
                     'call_package_id': call_package.id,
+                    'payout_mode': 'destination_charge',
+                    'listener_stripe_account_id': destination_account_id,
                 }
+                ,
+                'application_fee_amount': int(call_package.app_fee * 100),
+                'transfer_data': {
+                    'destination': destination_account_id,
+                },
             },
         )
         

@@ -233,21 +233,19 @@ class CallPackageViewSet(viewsets.ModelViewSet):
                     
                     # If payment succeeded immediately, add time
                     if payment_info['status'] == 'succeeded':
-                        from payment.listener_payouts import handle_call_package_payment_succeeded
-                        
                         call_package.status = 'confirmed'
                         call_package.save()
                         active_session.add_time(package.duration_minutes)
-                        
-                        # Transfer listener amount to their Stripe Connect account
-                        transfer_result = handle_call_package_payment_succeeded(call_package)
                         
                         return Response({
                             'message': f'Successfully added {package.duration_minutes} minutes to your call',
                             'call_package': CallPackageSerializer(call_package).data,
                             'session': CallSessionSerializer(active_session).data,
                             'payment': payment_info,
-                            'listener_payout': transfer_result
+                            'listener_payout': {
+                                'mode': 'destination_charge',
+                                'status': 'automatic'
+                            }
                         }, status=status.HTTP_200_OK)
                     
                     # Return client_secret for frontend to confirm payment
@@ -295,19 +293,17 @@ class CallPackageViewSet(viewsets.ModelViewSet):
                     
                     # If payment succeeded immediately
                     if payment_info['status'] == 'succeeded':
-                        from payment.listener_payouts import handle_call_package_payment_succeeded
-                        
                         call_package.status = 'confirmed'
                         call_package.save()
-                        
-                        # Transfer listener amount to their Stripe Connect account
-                        transfer_result = handle_call_package_payment_succeeded(call_package)
                         
                         return Response({
                             'message': f'Package purchased successfully. You can now call {listener.email}',
                             'call_package': CallPackageSerializer(call_package).data,
                             'payment': payment_info,
-                            'listener_payout': transfer_result,
+                            'listener_payout': {
+                                'mode': 'destination_charge',
+                                'status': 'automatic'
+                            },
                             'next_step': 'initiate_call'
                         }, status=status.HTTP_201_CREATED)
                     
@@ -1199,6 +1195,23 @@ class CallSessionViewSet(viewsets.ReadOnlyModelViewSet):
                 
                 # Create Stripe Checkout Session
                 stripe.api_key = settings.STRIPE_SECRET_KEY
+
+                if StripeListenerAccount is None:
+                    return Response(
+                        {'error': 'Stripe listener account model is unavailable'},
+                        status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                    )
+
+                try:
+                    listener_account = StripeListenerAccount.objects.get(
+                        listener=call_session.listener,
+                        is_enabled=True,
+                    )
+                except StripeListenerAccount.DoesNotExist:
+                    return Response(
+                        {'error': 'Listener has not connected an active Stripe account for automatic payout'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
                 
                 checkout_session = stripe.checkout.Session.create(
                     payment_method_types=['card'],
@@ -1224,14 +1237,22 @@ class CallSessionViewSet(viewsets.ReadOnlyModelViewSet):
                         'talker_id': request.user.id,
                         'listener_id': call_session.listener.id,
                         'package_id': universal_package.id,
-                        'duration_minutes': universal_package.duration_minutes
+                        'duration_minutes': universal_package.duration_minutes,
+                        'payout_mode': 'destination_charge',
+                        'listener_stripe_account_id': listener_account.stripe_account_id,
                     },
                     payment_intent_data={
                         'metadata': {
                             'type': 'call_package',
                             'call_package_id': extend_package.id,
-                            'call_session_id': call_session_id
-                        }
+                            'call_session_id': call_session_id,
+                            'payout_mode': 'destination_charge',
+                            'listener_stripe_account_id': listener_account.stripe_account_id,
+                        },
+                        'application_fee_amount': int(universal_package.app_fee * 100),
+                        'transfer_data': {
+                            'destination': listener_account.stripe_account_id,
+                        },
                     }
                 )
                 

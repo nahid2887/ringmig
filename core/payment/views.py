@@ -1819,6 +1819,17 @@ class TipViewSet(viewsets.ModelViewSet):
             from django.contrib.auth import get_user_model
             User = get_user_model()
             listener = User.objects.get(id=listener_id, user_type='listener')
+
+            try:
+                listener_account = StripeListenerAccount.objects.get(
+                    listener=listener,
+                    is_enabled=True,
+                )
+            except StripeListenerAccount.DoesNotExist:
+                return Response(
+                    {'error': 'Listener has not connected an active Stripe account for automatic payout'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
             
             # Create tip record
             tip = Tip.objects.create(
@@ -1849,11 +1860,17 @@ class TipViewSet(viewsets.ModelViewSet):
                 amount=int(amount * 100),  # Convert to cents
                 currency='usd',
                 customer=stripe_customer.stripe_customer_id,
+                application_fee_amount=int(tip.admin_fee * 100),
+                transfer_data={
+                    'destination': listener_account.stripe_account_id,
+                },
                 metadata={
                     'tip_id': tip.id,
                     'talker_id': request.user.id,
                     'listener_id': listener.id,
-                    'type': 'tip'
+                    'type': 'tip',
+                    'payout_mode': 'destination_charge',
+                    'listener_stripe_account_id': listener_account.stripe_account_id,
                 },
                 automatic_payment_methods={'enabled': True}
             )
@@ -1880,14 +1897,22 @@ class TipViewSet(viewsets.ModelViewSet):
                     'tip_id': tip.id,
                     'talker_id': request.user.id,
                     'listener_id': listener.id,
-                    'type': 'tip'
+                    'type': 'tip',
+                    'payout_mode': 'destination_charge',
+                    'listener_stripe_account_id': listener_account.stripe_account_id,
                 },
                 payment_intent_data={
+                    'application_fee_amount': int(tip.admin_fee * 100),
+                    'transfer_data': {
+                        'destination': listener_account.stripe_account_id,
+                    },
                     'metadata': {
                         'tip_id': tip.id,
                         'talker_id': request.user.id,
                         'listener_id': listener.id,
-                        'type': 'tip'
+                        'type': 'tip',
+                        'payout_mode': 'destination_charge',
+                        'listener_stripe_account_id': listener_account.stripe_account_id,
                     }
                 }
             )
@@ -1908,7 +1933,7 @@ class TipViewSet(viewsets.ModelViewSet):
                     "checkout_session_id": checkout_session.id
                 },
                 "message": "Payment intent created. Use the payment_link to complete payment.",
-                "note": "Listener will automatically receive their portion once payment is confirmed."
+                "note": "Listener payout uses Stripe destination charge and is credited automatically."
             })
             
         except User.DoesNotExist:
