@@ -1624,87 +1624,13 @@ class StripeWebhookView(APIView):
             tip_id = payment_intent['metadata'].get('tip_id')
             payment_type = payment_intent['metadata'].get('type')
 
-            # Handle bokking SessionBooking payment intent
-            if session_booking_id:
-                from bokking.models import SessionBooking
-                from bokking.views import broadcast_availability_update
-                from payment.listener_payouts import transfer_to_listener_stripe_account
-
-                try:
-                    session_booking = SessionBooking.objects.select_related('listener').get(id=session_booking_id)
-
-                    if session_booking.is_payment_expired:
-                        listener = session_booking.listener
-                        session_booking.delete()
-                        if hasattr(listener, 'booking_availability'):
-                            broadcast_availability_update(listener.booking_availability)
-                        logger.warning(f"Expired session booking {session_booking_id} deleted on late payment_intent.succeeded")
-                        return Response({'status': 'processed'})
-
-                    session_booking.status = 'completed'
-                    session_booking.transaction_id = payment_intent['id']
-                    session_booking.payment_completed_at = timezone.now()
-
-                    if not session_booking.stripe_transfer_id:
-                        transfer_result = transfer_to_listener_stripe_account(
-                            listener=session_booking.listener,
-                            amount=session_booking.listener_amount,
-                            source_type='session_booking',
-                            source_id=session_booking.id,
-                            description=f"Session booking payment for {session_booking.listener.email}",
-                        )
-                        if transfer_result['success']:
-                            session_booking.stripe_transfer_id = transfer_result['transfer_id']
-
-                    session_booking.save(update_fields=['status', 'transaction_id', 'payment_completed_at', 'stripe_transfer_id', 'updated_at'])
-
-                    if hasattr(session_booking.listener, 'booking_availability'):
-                        broadcast_availability_update(session_booking.listener.booking_availability)
-
-                    logger.info(f"✓ Payment succeeded for session booking {session_booking_id}")
-                    return Response({'status': 'processed'})
-                except SessionBooking.DoesNotExist:
-                    logger.warning(f"Session booking {session_booking_id} not found for payment_intent.succeeded")
-                    return Response({'status': 'processed'})
-            
-            # Handle tip payment
-            if tip_id or payment_type == 'tip':
-                try:
-                    from payment.listener_payouts import handle_tip_payment_succeeded
-
-                    tip = Tip.objects.get(
-                        id=tip_id,
-                        stripe_payment_intent_id=payment_intent['id']
-                    )
-                    
-                    if tip.confirm_payment():
-                        transfer_result = handle_tip_payment_succeeded(tip)
-                        logger.info(f"✓ Tip payment succeeded: ${tip.amount} from {tip.talker.email} to {tip.listener.email}")
-                        logger.info(f"💰 Listener transfer result: {transfer_result.get('message')}")
-                    else:
-                        logger.warning(f"⚠ Failed to confirm tip payment {tip_id}")
-                    
-                    return Response({'status': 'processed'})
-                    
-                except Tip.DoesNotExist:
-                    logger.error(f"Tip {tip_id} not found for payment intent {payment_intent['id']}")
-                    return Response({'status': 'processed'})
-            
-            # Handle call package payment
-            if call_package_id:
-                from chat.call_models import CallPackage
-                from payment.listener_payouts import handle_call_package_payment_succeeded
-                
-                call_package = CallPackage.objects.get(id=call_package_id)
-                call_package.stripe_payment_intent_id = payment_intent['id']
-                call_package.stripe_charge_id = payment_intent.get('latest_charge', '')
-                call_package.status = 'confirmed'
-                call_package.save()
-
-                transfer_result = handle_call_package_payment_succeeded(call_package)
-                logger.info(f"Listener transfer for call package {call_package_id}: {transfer_result.get('message')}")
-                
-                logger.info(f"✓ Payment succeeded for call package {call_package_id}")
+            # These purchase flows are finalized by checkout.session.completed,
+            # which is the single payout trigger to prevent duplicate transfers.
+            if session_booking_id or call_package_id or tip_id or payment_type in {'session_booking', 'call_package', 'tip'}:
+                logger.info(
+                    "Skipping payment_intent.succeeded payout handling for checkout-based purchase flow: %s",
+                    payment_intent['id'],
+                )
                 return Response({'status': 'processed'})
             
             # Handle booking payment
