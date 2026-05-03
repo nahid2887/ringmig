@@ -1338,12 +1338,15 @@ class StripeWebhookView(APIView):
                 
                 if tip_id:
                     try:
+                        from payment.listener_payouts import handle_tip_payment_succeeded
+
                         tip = Tip.objects.get(id=tip_id)
                         
                         if tip.status == 'pending':
                             if tip.confirm_payment():
+                                transfer_result = handle_tip_payment_succeeded(tip)
                                 logger.info(f"✓ Tip payment via checkout completed: ${tip.amount} from {tip.talker.email} to {tip.listener.email}")
-                                logger.info(f"💰 Listener balance updated: +${tip.listener_amount}")
+                                logger.info(f"💰 Listener transfer result: {transfer_result.get('message')}")
                             else:
                                 logger.warning(f"⚠ Failed to confirm tip payment {tip_id} via checkout")
                         else:
@@ -1463,11 +1466,15 @@ class StripeWebhookView(APIView):
             # Handle call package checkout (initial purchase)
             if call_package_id:
                 from chat.call_models import CallPackage
+                from payment.listener_payouts import handle_call_package_payment_succeeded
                 
                 call_package = CallPackage.objects.get(id=call_package_id)
                 call_package.stripe_payment_intent_id = payment_intent_id
                 call_package.status = 'confirmed'
                 call_package.save()
+
+                transfer_result = handle_call_package_payment_succeeded(call_package)
+                logger.info(f"Listener transfer for call package checkout {call_package_id}: {transfer_result.get('message')}")
                 
                 logger.info(f"✓ Call package {call_package_id} confirmed via checkout.session.completed")
                 return Response({
@@ -1637,14 +1644,17 @@ class StripeWebhookView(APIView):
             # Handle tip payment
             if tip_id or payment_type == 'tip':
                 try:
+                    from payment.listener_payouts import handle_tip_payment_succeeded
+
                     tip = Tip.objects.get(
                         id=tip_id,
                         stripe_payment_intent_id=payment_intent['id']
                     )
                     
                     if tip.confirm_payment():
+                        transfer_result = handle_tip_payment_succeeded(tip)
                         logger.info(f"✓ Tip payment succeeded: ${tip.amount} from {tip.talker.email} to {tip.listener.email}")
-                        logger.info(f"💰 Listener balance updated: +${tip.listener_amount}")
+                        logger.info(f"💰 Listener transfer result: {transfer_result.get('message')}")
                     else:
                         logger.warning(f"⚠ Failed to confirm tip payment {tip_id}")
                     
@@ -1657,23 +1667,16 @@ class StripeWebhookView(APIView):
             # Handle call package payment
             if call_package_id:
                 from chat.call_models import CallPackage
-                from payment.models import RevenueTracking
+                from payment.listener_payouts import handle_call_package_payment_succeeded
                 
                 call_package = CallPackage.objects.get(id=call_package_id)
                 call_package.stripe_payment_intent_id = payment_intent['id']
                 call_package.stripe_charge_id = payment_intent.get('latest_charge', '')
                 call_package.status = 'confirmed'
                 call_package.save()
-                
-                # Create revenue tracking entry for financial reporting
-                try:
-                    revenue_tracking = RevenueTracking.create_from_call_package(
-                        call_package=call_package,
-                        stripe_payment_intent_id=payment_intent['id']
-                    )
-                    logger.info(f"📊 Revenue tracking created: Total ${revenue_tracking.total_amount} = Admin ${revenue_tracking.admin_portion} + Listener ${revenue_tracking.listener_portion}")
-                except Exception as e:
-                    logger.error(f"Failed to create revenue tracking for call package {call_package_id}: {str(e)}")
+
+                transfer_result = handle_call_package_payment_succeeded(call_package)
+                logger.info(f"Listener transfer for call package {call_package_id}: {transfer_result.get('message')}")
                 
                 logger.info(f"✓ Payment succeeded for call package {call_package_id}")
                 return Response({'status': 'processed'})
@@ -1860,16 +1863,12 @@ class TipViewSet(viewsets.ModelViewSet):
                 amount=int(amount * 100),  # Convert to cents
                 currency='usd',
                 customer=stripe_customer.stripe_customer_id,
-                application_fee_amount=int(tip.admin_fee * 100),
-                transfer_data={
-                    'destination': listener_account.stripe_account_id,
-                },
                 metadata={
                     'tip_id': tip.id,
                     'talker_id': request.user.id,
                     'listener_id': listener.id,
                     'type': 'tip',
-                    'payout_mode': 'destination_charge',
+                    'payout_mode': 'listener_transfer',
                     'listener_stripe_account_id': listener_account.stripe_account_id,
                 },
                 automatic_payment_methods={'enabled': True}
@@ -1898,20 +1897,16 @@ class TipViewSet(viewsets.ModelViewSet):
                     'talker_id': request.user.id,
                     'listener_id': listener.id,
                     'type': 'tip',
-                    'payout_mode': 'destination_charge',
+                    'payout_mode': 'listener_transfer',
                     'listener_stripe_account_id': listener_account.stripe_account_id,
                 },
                 payment_intent_data={
-                    'application_fee_amount': int(tip.admin_fee * 100),
-                    'transfer_data': {
-                        'destination': listener_account.stripe_account_id,
-                    },
                     'metadata': {
                         'tip_id': tip.id,
                         'talker_id': request.user.id,
                         'listener_id': listener.id,
                         'type': 'tip',
-                        'payout_mode': 'destination_charge',
+                        'payout_mode': 'listener_transfer',
                         'listener_stripe_account_id': listener_account.stripe_account_id,
                     }
                 }
@@ -1933,7 +1928,7 @@ class TipViewSet(viewsets.ModelViewSet):
                     "checkout_session_id": checkout_session.id
                 },
                 "message": "Payment intent created. Use the payment_link to complete payment.",
-                "note": "Listener payout uses Stripe destination charge and is credited automatically."
+                "note": "Listener payout is transferred automatically after payment succeeds."
             })
             
         except User.DoesNotExist:

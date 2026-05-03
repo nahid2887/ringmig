@@ -83,12 +83,8 @@ def create_call_package_payment_intent(call_package, payment_method_id=None):
                 'duration_minutes': call_package.package.duration_minutes,
                 'app_fee': str(call_package.app_fee),
                 'listener_amount': str(call_package.listener_amount),
-                'payout_mode': 'destination_charge',
+                'payout_mode': 'listener_transfer',
                 'listener_stripe_account_id': destination_account_id,
-            },
-            'application_fee_amount': int(call_package.app_fee * 100),
-            'transfer_data': {
-                'destination': destination_account_id,
             },
             'description': f'Call Package: {call_package.package.name} ({call_package.package.duration_minutes} min)',
         }
@@ -122,20 +118,15 @@ def create_call_package_payment_intent(call_package, payment_method_id=None):
                 'type': 'call_package',
                 'call_package_id': call_package.id,
                 'payment_intent_id': payment_intent.id,
-                'payout_mode': 'destination_charge',
+                'payout_mode': 'listener_transfer',
                 'listener_stripe_account_id': destination_account_id,
             },
             payment_intent_data={
                 'metadata': {
                     'type': 'call_package',
                     'call_package_id': call_package.id,
-                    'payout_mode': 'destination_charge',
+                    'payout_mode': 'listener_transfer',
                     'listener_stripe_account_id': destination_account_id,
-                }
-                ,
-                'application_fee_amount': int(call_package.app_fee * 100),
-                'transfer_data': {
-                    'destination': destination_account_id,
                 },
             },
         )
