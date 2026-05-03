@@ -583,20 +583,80 @@ class StripeWebhookView(APIView):
         return Response(status=status.HTTP_200_OK)
     
     def _handle_payment_succeeded(self, payment_intent):
-        """Handle successful payment."""
+        """Handle successful payment for any type (booking, call_package, tip)."""
+        from payment.listener_payouts import (
+            handle_booking_payment_succeeded,
+            handle_call_package_payment_succeeded,
+            handle_tip_payment_succeeded
+        )
+        
+        intent_id = payment_intent['id']
+        metadata = payment_intent.get('metadata', {})
+        
+        # Route to handler based on metadata type
+        payment_type = metadata.get('type', 'booking')
+        
         try:
-            payment = Payment.objects.get(
-                stripe_payment_intent_id=payment_intent['id']
-            )
-            payment.status = 'succeeded'
-            payment.stripe_charge_id = payment_intent.get('latest_charge', '')
-            payment.paid_at = timezone.now()
-            payment.save()
+            if payment_type == 'booking':
+                # Handle booking payment
+                try:
+                    payment = Payment.objects.get(stripe_payment_intent_id=intent_id)
+                    payment.status = 'succeeded'
+                    payment.stripe_charge_id = payment_intent.get('latest_charge', '')
+                    payment.paid_at = timezone.now()
+                    payment.save()
+                    
+                    # Transfer listener amount to Stripe Connect account
+                    transfer_result = handle_booking_payment_succeeded(payment.booking)
+                    logger.info(
+                        f"Payment succeeded for booking {payment.booking.id}. "
+                        f"Transfer: {transfer_result['message']}"
+                    )
+                except Payment.DoesNotExist:
+                    logger.error(f"Payment not found for intent: {intent_id}")
             
-            logger.info(f"Payment succeeded for booking {payment.booking.id}")
+            elif payment_type == 'call_package':
+                # Handle call package payment
+                call_package_id = metadata.get('call_package_id')
+                try:
+                    from chat.models import CallPackage
+                    call_package = CallPackage.objects.get(id=call_package_id)
+                    call_package.stripe_payment_intent_id = intent_id
+                    call_package.stripe_charge_id = payment_intent.get('latest_charge', '')
+                    call_package.save(update_fields=['stripe_payment_intent_id', 'stripe_charge_id'])
+                    
+                    # Transfer listener amount to Stripe Connect account
+                    transfer_result = handle_call_package_payment_succeeded(call_package)
+                    logger.info(
+                        f"Call package {call_package_id} payment succeeded. "
+                        f"Transfer: {transfer_result['message']}"
+                    )
+                except Exception as e:
+                    logger.error(f"Error handling call package payment for {call_package_id}: {str(e)}")
             
-        except Payment.DoesNotExist:
-            logger.error(f"Payment not found for intent: {payment_intent['id']}")
+            elif payment_type == 'tip':
+                # Handle tip payment
+                tip_id = metadata.get('tip_id')
+                try:
+                    tip = Tip.objects.get(id=tip_id)
+                    tip.stripe_payment_intent_id = intent_id
+                    tip.stripe_charge_id = payment_intent.get('latest_charge', '')
+                    tip.save(update_fields=['stripe_payment_intent_id', 'stripe_charge_id'])
+                    
+                    # Transfer listener amount to Stripe Connect account
+                    transfer_result = handle_tip_payment_succeeded(tip)
+                    logger.info(
+                        f"Tip {tip_id} payment succeeded. "
+                        f"Transfer: {transfer_result['message']}"
+                    )
+                except Exception as e:
+                    logger.error(f"Error handling tip payment for {tip_id}: {str(e)}")
+            
+            else:
+                logger.warning(f"Unknown payment type '{payment_type}' for intent: {intent_id}")
+        
+        except Exception as e:
+            logger.error(f"Error handling payment succeeded for intent {intent_id}: {str(e)}")
     
     def _handle_payment_failed(self, payment_intent):
         """Handle failed payment."""
@@ -1832,7 +1892,9 @@ class TipViewSet(viewsets.ModelViewSet):
                     "currency": "usd",
                     "payment_link": checkout_session.url,
                     "checkout_session_id": checkout_session.id
-                }
+                },
+                "message": "Payment intent created. Use the payment_link to complete payment.",
+                "note": "Listener will automatically receive their portion once payment is confirmed."
             })
             
         except User.DoesNotExist:

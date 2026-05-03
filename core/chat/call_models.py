@@ -136,6 +136,8 @@ class CallPackage(models.Model):
     stripe_payment_intent_id = models.CharField(max_length=255, unique=True, null=True, blank=True)
     stripe_charge_id = models.CharField(max_length=255, blank=True, default='')
     stripe_customer_id = models.CharField(max_length=255, blank=True, default='')
+    stripe_transfer_id = models.CharField(max_length=255, blank=True, default='', help_text=_('Stripe transfer ID to listener account'))
+    stripe_checkout_session_id = models.CharField(max_length=255, blank=True, default='', help_text=_('Stripe checkout session ID'))
     
     # Additional info
     notes = models.TextField(blank=True, default='')

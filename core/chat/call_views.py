@@ -233,15 +233,21 @@ class CallPackageViewSet(viewsets.ModelViewSet):
                     
                     # If payment succeeded immediately, add time
                     if payment_info['status'] == 'succeeded':
+                        from payment.listener_payouts import handle_call_package_payment_succeeded
+                        
                         call_package.status = 'confirmed'
                         call_package.save()
                         active_session.add_time(package.duration_minutes)
+                        
+                        # Transfer listener amount to their Stripe Connect account
+                        transfer_result = handle_call_package_payment_succeeded(call_package)
                         
                         return Response({
                             'message': f'Successfully added {package.duration_minutes} minutes to your call',
                             'call_package': CallPackageSerializer(call_package).data,
                             'session': CallSessionSerializer(active_session).data,
-                            'payment': payment_info
+                            'payment': payment_info,
+                            'listener_payout': transfer_result
                         }, status=status.HTTP_200_OK)
                     
                     # Return client_secret for frontend to confirm payment
@@ -289,13 +295,19 @@ class CallPackageViewSet(viewsets.ModelViewSet):
                     
                     # If payment succeeded immediately
                     if payment_info['status'] == 'succeeded':
+                        from payment.listener_payouts import handle_call_package_payment_succeeded
+                        
                         call_package.status = 'confirmed'
                         call_package.save()
+                        
+                        # Transfer listener amount to their Stripe Connect account
+                        transfer_result = handle_call_package_payment_succeeded(call_package)
                         
                         return Response({
                             'message': f'Package purchased successfully. You can now call {listener.email}',
                             'call_package': CallPackageSerializer(call_package).data,
                             'payment': payment_info,
+                            'listener_payout': transfer_result,
                             'next_step': 'initiate_call'
                         }, status=status.HTTP_201_CREATED)
                     

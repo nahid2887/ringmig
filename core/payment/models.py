@@ -446,6 +446,7 @@ class Tip(models.Model):
     stripe_payment_intent_id = models.CharField(max_length=255, unique=True, null=True, blank=True)
     stripe_charge_id = models.CharField(max_length=255, blank=True)
     stripe_customer_id = models.CharField(max_length=255, blank=True)
+    stripe_transfer_id = models.CharField(max_length=255, blank=True, default='', help_text=_('Stripe transfer ID to listener account'))
     
     # Additional info
     message = models.TextField(blank=True, help_text=_('Optional message with the tip'))
