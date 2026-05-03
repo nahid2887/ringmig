@@ -648,12 +648,32 @@ class StripePublishableKeyView(APIView):
 
 
 class ListenerConnectAccountView(APIView):
-    """Create Stripe Connect account for listener to receive payouts."""
+    """
+    Stripe Connect Account API for Listeners
+    
+    Allows listeners to connect their Stripe accounts to receive payouts.
+    Uses Stripe Connect Express accounts for onboarding.
+    
+    Endpoints:
+    - POST: Create or refresh Stripe Connect account setup link
+    - GET: Get account connection status and details
+    """
     
     permission_classes = [IsAuthenticated]
     
     def post(self, request):
-        """Create Stripe Connect account link for listener."""
+        """
+        Create Stripe Connect account link for listener.
+        
+        Returns:
+        {
+            "url": "https://connect.stripe.com/setup/e/acct_1TSqAMAxCCHEibaN/wQ3rOmorgIa0",
+            "account_id": "acct_1TSqAMAxCCHEibaN",
+            "type": "onboarding",
+            "expires_at": "2026-01-26T10:00:00Z",
+            "message": "Complete your Stripe account setup using the link above"
+        }
+        """
         user = request.user
         
         # Only listeners can create connect accounts
@@ -668,6 +688,7 @@ class ListenerConnectAccountView(APIView):
             try:
                 listener_account = StripeListenerAccount.objects.get(listener=user)
                 account_id = listener_account.stripe_account_id
+                is_new = False
             except StripeListenerAccount.DoesNotExist:
                 # Create new Stripe Connect Express account
                 account = stripe.Account.create(
@@ -676,9 +697,10 @@ class ListenerConnectAccountView(APIView):
                     email=user.email,
                     capabilities={
                         'transfers': {'requested': True},
+                        'payouts': {'requested': True},
                     },
                     business_type='individual',
-                    metadata={'user_id': user.id}
+                    metadata={'user_id': user.id, 'user_email': user.email}
                 )
                 
                 # Save account ID
@@ -688,6 +710,8 @@ class ListenerConnectAccountView(APIView):
                     is_verified=False
                 )
                 account_id = account.id
+                is_new = True
+                logger.info(f"Created new Stripe Connect account for user {user.id}: {account_id}")
             
             # Create account link for onboarding
             account_link = stripe.AccountLink.create(
@@ -698,9 +722,22 @@ class ListenerConnectAccountView(APIView):
             )
             
             return Response({
+                'success': True,
                 'url': account_link.url,
-                'account_id': account_id
-            })
+                'account_id': account_id,
+                'type': 'account_onboarding',
+                'expires_at': account_link.expires_at,
+                'message': 'Complete your Stripe account setup using the link above',
+                'is_new_account': is_new,
+                'instructions': [
+                    '1. Click the URL above or copy it to your browser',
+                    '2. Accept the Stripe Service Agreement',
+                    '3. Provide your personal information and business details',
+                    '4. Add your banking information for payouts',
+                    '5. Agree to the Stripe Connected Account Agreement',
+                    '6. You will be redirected back when complete'
+                ]
+            }, status=status.HTTP_200_OK)
             
         except stripe.error.StripeError as e:
             logger.error(f"Stripe Connect error: {str(e)}")
@@ -708,9 +745,32 @@ class ListenerConnectAccountView(APIView):
                 {'error': 'Failed to create payout account', 'details': str(e)},
                 status=status.HTTP_400_BAD_REQUEST
             )
+        except Exception as e:
+            logger.error(f"Unexpected error in ListenerConnectAccountView: {str(e)}")
+            return Response(
+                {'error': 'An unexpected error occurred', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
     
     def get(self, request):
-        """Get listener's Stripe Connect account status."""
+        """
+        Get listener's Stripe Connect account status.
+        
+        Returns:
+        {
+            "has_account": true,
+            "account_id": "acct_1TSqAMAxCCHEibaN",
+            "email": "listener@example.com",
+            "is_verified": true,
+            "details_submitted": true,
+            "payouts_enabled": true,
+            "charges_enabled": true,
+            "verification_status": "Complete",
+            "requirements": null,
+            "country": "US",
+            "created_at": "2026-01-25T10:00:00Z"
+        }
+        """
         user = request.user
         
         if user.user_type != 'listener':
@@ -725,47 +785,174 @@ class ListenerConnectAccountView(APIView):
             # Get account details from Stripe
             account = stripe.Account.retrieve(listener_account.stripe_account_id)
             
+            # Determine verification status
+            if account.charges_enabled and account.payouts_enabled:
+                verification_status = "Complete ✓"
+                is_verified = True
+            elif account.details_submitted:
+                verification_status = "Pending ⏳"
+                is_verified = False
+            else:
+                verification_status = "Not Started"
+                is_verified = False
+            
             return Response({
                 'has_account': True,
                 'account_id': listener_account.stripe_account_id,
-                'is_verified': account.charges_enabled and account.payouts_enabled,
+                'email': account.email,
+                'is_verified': is_verified,
                 'details_submitted': account.details_submitted,
                 'payouts_enabled': account.payouts_enabled,
                 'charges_enabled': account.charges_enabled,
+                'verification_status': verification_status,
+                'requirements': account.requirements.current_deadline if account.requirements else None,
+                'country': account.country,
+                'created_at': listener_account.created_at.isoformat(),
+                'updated_at': listener_account.updated_at.isoformat(),
+                'type': account.type,
+                'business_profile': account.get('business_profile'),
+                'next_steps': self._get_next_steps(account, listener_account)
             })
             
         except StripeListenerAccount.DoesNotExist:
             return Response({
                 'has_account': False,
-                'message': 'No payout account created yet'
-            })
+                'message': 'No payout account created yet',
+                'next_step': 'Call POST endpoint to create a Stripe Connect account'
+            }, status=status.HTTP_200_OK)
         except stripe.error.StripeError as e:
+            logger.error(f"Stripe error in get: {str(e)}")
             return Response(
                 {'error': 'Failed to retrieve account status', 'details': str(e)},
-                status=status.HTTP_400_BAD_REQUEST
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+    
+    def _get_next_steps(self, account, listener_account):
+        """Determine the next steps based on account status."""
+        steps = []
+        
+        if not account.details_submitted:
+            steps.append("Complete your personal and business information")
+        
+        if not account.payouts_enabled:
+            steps.append("Add banking information for payouts")
+        
+        if account.requirements and account.requirements.eventually_due:
+            steps.append(f"Complete requirements by {account.requirements.current_deadline}")
+        
+        if not listener_account.is_verified and account.payouts_enabled and account.charges_enabled:
+            listener_account.is_verified = True
+            listener_account.save()
+            steps.append("✓ Your account is verified and ready to receive payouts!")
+        
+        return steps if steps else ["✓ Your account is fully set up and verified"]
 
 
 class ListenerConnectRefreshView(APIView):
-    """Handle refresh when listener needs to complete onboarding."""
+    """
+    Stripe Connect Refresh URL Handler
+    
+    This view is called when a listener exits the Stripe Connect setup
+    without completing the onboarding. It provides a new link to resume.
+    
+    Flow:
+    1. Listener leaves Stripe Connect onboarding early
+    2. Stripe redirects to this refresh URL
+    3. We generate a new account link for them to continue
+    """
     
     permission_classes = [IsAuthenticated]
     
+    def post(self, request):
+        """
+        Refresh the Stripe Connect account link.
+        
+        Returns a new onboarding link if the user needs to resume setup.
+        """
+        user = request.user
+        
+        if user.user_type != 'listener':
+            return Response(
+                {'error': 'Only listeners can refresh payout accounts'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        try:
+            listener_account = StripeListenerAccount.objects.get(listener=user)
+            
+            # Create a new account link
+            account_link = stripe.AccountLink.create(
+                account=listener_account.stripe_account_id,
+                refresh_url=request.build_absolute_uri('/api/payment/listener/connect/refresh/'),
+                return_url=request.build_absolute_uri('/api/payment/listener/connect/return/'),
+                type='account_onboarding',
+            )
+            
+            return Response({
+                'success': True,
+                'url': account_link.url,
+                'message': 'Continue your Stripe account setup using the link above',
+                'expires_at': account_link.expires_at
+            })
+        
+        except StripeListenerAccount.DoesNotExist:
+            return Response(
+                {'error': 'No payout account found. Please create one first.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except stripe.error.StripeError as e:
+            logger.error(f"Stripe error in refresh: {str(e)}")
+            return Response(
+                {'error': 'Failed to refresh onboarding link', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
     def get(self, request):
-        """Redirect back to create new account link."""
+        """
+        GET endpoint for Stripe's refresh_url redirect.
+        
+        Returns instructions to resume the setup.
+        """
         return Response({
-            'message': 'Please complete the onboarding process',
-            'action': 'refresh_onboarding'
+            'success': False,
+            'message': 'Your setup was interrupted. Please use the mobile app or visit your account settings to continue.',
+            'action': 'call_post_endpoint_to_refresh',
+            'instructions': 'Call POST on this endpoint to get a new setup link'
         })
 
 
 class ListenerConnectReturnView(APIView):
-    """Handle return after successful Stripe Connect onboarding."""
+    """
+    Stripe Connect Return URL Handler
+    
+    This view is called after the listener completes the Stripe Connect onboarding.
+    It verifies the account is properly set up and ready to receive payouts.
+    
+    Flow:
+    1. Listener completes Stripe Connect onboarding
+    2. Stripe redirects to this return URL
+    3. We verify the account status and mark as verified if complete
+    """
     
     permission_classes = [IsAuthenticated]
     
     def get(self, request):
-        """Verify account setup completion."""
+        """
+        Verify account setup completion after returning from Stripe.
+        
+        Returns:
+        {
+            "success": true,
+            "message": "Your Stripe account is set up and verified!",
+            "is_verified": true,
+            "payouts_enabled": true,
+            "next_steps": [
+                "✓ Your account is connected",
+                "✓ You can start receiving payouts",
+                "✓ Payments from bookings will be transferred to your bank account"
+            ]
+        }
+        """
         user = request.user
         
         try:
@@ -773,21 +960,47 @@ class ListenerConnectReturnView(APIView):
             account = stripe.Account.retrieve(listener_account.stripe_account_id)
             
             # Update verification status
-            if account.charges_enabled and account.payouts_enabled:
+            is_verified = account.charges_enabled and account.payouts_enabled
+            if is_verified:
                 listener_account.is_verified = True
                 listener_account.save()
+                logger.info(f"Listener account verified: {user.id}")
+            
+            next_steps = []
+            if is_verified:
+                next_steps = [
+                    "✓ Your account is connected",
+                    "✓ You can start receiving payouts",
+                    "✓ Earnings from bookings will be transferred to your bank account"
+                ]
+            else:
+                next_steps = [
+                    f"⏳ Complete verification (required by: {account.requirements.current_deadline})" if account.requirements else "⏳ Pending verification",
+                    "⚠ Some account details are pending" if not account.details_submitted else "✓ Details submitted",
+                    "⚠ Payouts not yet enabled" if not account.payouts_enabled else "✓ Payouts enabled"
+                ]
             
             return Response({
-                'success': True,
-                'message': 'Payout account setup completed!',
-                'is_verified': listener_account.is_verified,
-                'can_receive_payouts': account.payouts_enabled
+                'success': is_verified,
+                'message': 'Your Stripe account setup completed!' if is_verified else 'Your Stripe account setup is in progress.',
+                'is_verified': is_verified,
+                'payouts_enabled': account.payouts_enabled,
+                'charges_enabled': account.charges_enabled,
+                'details_submitted': account.details_submitted,
+                'account_id': listener_account.stripe_account_id,
+                'next_steps': next_steps
             })
             
         except StripeListenerAccount.DoesNotExist:
             return Response(
                 {'error': 'No payout account found'},
                 status=status.HTTP_404_NOT_FOUND
+            )
+        except stripe.error.StripeError as e:
+            logger.error(f"Stripe error in return: {str(e)}")
+            return Response(
+                {'error': 'Failed to verify account', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
 

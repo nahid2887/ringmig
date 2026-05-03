@@ -1,4 +1,9 @@
 from django.contrib import admin
+from django.utils.html import format_html
+from django.urls import reverse
+from django.contrib import messages
+import stripe
+from django.conf import settings
 from .models import (
     BookingPackage, 
     Booking, 
@@ -8,6 +13,8 @@ from .models import (
     StripeListenerAccount,
     Tip
 )
+
+stripe.api_key = settings.STRIPE_SECRET_KEY
 
 
 @admin.register(BookingPackage)
@@ -53,10 +60,115 @@ class StripeCustomerAdmin(admin.ModelAdmin):
 
 @admin.register(StripeListenerAccount)
 class StripeListenerAccountAdmin(admin.ModelAdmin):
-    list_display = ['listener', 'stripe_account_id', 'is_verified', 'is_enabled', 'created_at']
-    list_filter = ['is_verified', 'is_enabled']
+    list_display = ['listener', 'stripe_account_id', 'verification_status', 'is_enabled', 'get_connect_link', 'created_at']
+    list_filter = ['is_verified', 'is_enabled', 'created_at']
     search_fields = ['listener__email', 'stripe_account_id']
-    readonly_fields = ['created_at', 'updated_at']
+    readonly_fields = ['created_at', 'updated_at', 'stripe_account_id', 'account_details', 'get_connect_link']
+    actions = ['generate_connect_link', 'verify_account_status', 'disable_account']
+    
+    def verification_status(self, obj):
+        """Display verification status with color coding."""
+        if obj.is_verified:
+            return format_html(
+                '<span style="color: green; font-weight: bold;">✓ Verified</span>'
+            )
+        return format_html(
+            '<span style="color: orange; font-weight: bold;">⚠ Pending</span>'
+        )
+    verification_status.short_description = 'Status'
+    
+    def get_connect_link(self, obj):
+        """Display Stripe dashboard link."""
+        if obj.stripe_account_id:
+            url = f"https://dashboard.stripe.com/accounts/{obj.stripe_account_id}"
+            return format_html(
+                '<a class="button" href="{}" target="_blank">View in Stripe Dashboard</a>', url
+            )
+        return "No account"
+    get_connect_link.short_description = 'Stripe Dashboard'
+    
+    def account_details(self, obj):
+        """Display detailed account information from Stripe."""
+        try:
+            account = stripe.Account.retrieve(obj.stripe_account_id)
+            details = f"""
+            <b>Account ID:</b> {account.id}<br>
+            <b>Email:</b> {account.email}<br>
+            <b>Charges Enabled:</b> {'Yes ✓' if account.charges_enabled else 'No ✗'}<br>
+            <b>Payouts Enabled:</b> {'Yes ✓' if account.payouts_enabled else 'No ✗'}<br>
+            <b>Details Submitted:</b> {'Yes ✓' if account.details_submitted else 'No ✗'}<br>
+            <b>Country:</b> {account.country}<br>
+            """
+            if account.requirements:
+                details += f"<b>Verification Status:</b> {account.requirements.current_deadline}<br>"
+            return format_html(details)
+        except Exception as e:
+            return f"Error fetching details: {str(e)}"
+    account_details.short_description = 'Account Details'
+    
+    def generate_connect_link(self, request, queryset):
+        """Generate/regenerate Stripe Connect onboarding link."""
+        for obj in queryset:
+            try:
+                account_link = stripe.AccountLink.create(
+                    account=obj.stripe_account_id,
+                    refresh_url=request.build_absolute_uri('/api/payment/listener/connect/refresh/'),
+                    return_url=request.build_absolute_uri('/api/payment/listener/connect/return/'),
+                    type='account_onboarding',
+                )
+                
+                # Store the link in session for admin to view
+                self.message_user(
+                    request,
+                    f"✓ Connect link generated for {obj.listener.email}.\n"
+                    f"Send this link to the listener:\n{account_link.url}",
+                    messages.SUCCESS
+                )
+            except Exception as e:
+                self.message_user(
+                    request,
+                    f"✗ Error generating link for {obj.listener.email}: {str(e)}",
+                    messages.ERROR
+                )
+    generate_connect_link.short_description = "Generate Stripe Connect Link"
+    
+    def verify_account_status(self, request, queryset):
+        """Check and update account verification status from Stripe."""
+        for obj in queryset:
+            try:
+                account = stripe.Account.retrieve(obj.stripe_account_id)
+                
+                if account.charges_enabled and account.payouts_enabled:
+                    obj.is_verified = True
+                    obj.save()
+                    status_msg = "Verified ✓"
+                else:
+                    obj.is_verified = False
+                    obj.save()
+                    status_msg = f"Not verified - Charges: {account.charges_enabled}, Payouts: {account.payouts_enabled}"
+                
+                self.message_user(
+                    request,
+                    f"Updated {obj.listener.email}: {status_msg}",
+                    messages.SUCCESS
+                )
+            except Exception as e:
+                self.message_user(
+                    request,
+                    f"Error checking {obj.listener.email}: {str(e)}",
+                    messages.ERROR
+                )
+    verify_account_status.short_description = "Check & Update Account Status"
+    
+    def disable_account(self, request, queryset):
+        """Disable account from receiving payouts."""
+        updated = queryset.update(is_enabled=False)
+        self.message_user(
+            request,
+            f"Disabled {updated} account(s).",
+            messages.SUCCESS
+        )
+    disable_account.short_description = "Disable Account"
 
 
 @admin.register(Tip)
