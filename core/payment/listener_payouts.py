@@ -8,6 +8,7 @@ import logging
 from django.conf import settings
 from decimal import Decimal
 from django.utils import timezone
+from django.db import transaction
 
 logger = logging.getLogger(__name__)
 
@@ -137,25 +138,36 @@ def handle_call_package_payment_succeeded(call_package):
     try:
         from chat.models import CallPackage
         
-        # Update call package status
-        call_package.status = 'confirmed'
-        call_package.save(update_fields=['status', 'updated_at'])
-        
-        # Transfer to listener
-        transfer_result = transfer_to_listener_stripe_account(
-            listener=call_package.listener,
-            amount=call_package.listener_amount,
-            source_type='call_package',
-            source_id=call_package.id,
-            description=f"Payment for call package: {call_package.package.name} ({call_package.package.duration_minutes} min)"
-        )
-        
-        # Update call package with transfer info if successful
-        if transfer_result['success']:
-            call_package.stripe_transfer_id = transfer_result['transfer_id']
-            call_package.save(update_fields=['stripe_transfer_id'])
-        
-        return transfer_result
+        with transaction.atomic():
+            locked_call_package = CallPackage.objects.select_for_update().get(id=call_package.id)
+
+            if locked_call_package.stripe_transfer_id:
+                return {
+                    'success': True,
+                    'transfer_id': locked_call_package.stripe_transfer_id,
+                    'error': None,
+                    'message': 'Listener payout already transferred for this call package'
+                }
+
+            # Update call package status
+            locked_call_package.status = 'confirmed'
+            locked_call_package.save(update_fields=['status', 'updated_at'])
+
+            # Transfer to listener
+            transfer_result = transfer_to_listener_stripe_account(
+                listener=locked_call_package.listener,
+                amount=locked_call_package.listener_amount,
+                source_type='call_package',
+                source_id=locked_call_package.id,
+                description=f"Payment for call package: {locked_call_package.package.name} ({locked_call_package.package.duration_minutes} min)"
+            )
+
+            # Update call package with transfer info if successful
+            if transfer_result['success']:
+                locked_call_package.stripe_transfer_id = transfer_result['transfer_id']
+                locked_call_package.save(update_fields=['stripe_transfer_id'])
+
+            return transfer_result
         
     except Exception as e:
         logger.error(f"Error handling call package payment for {call_package.id}: {str(e)}")
@@ -179,22 +191,37 @@ def handle_tip_payment_succeeded(tip):
     """
     try:
         from payment.models import Tip
-        
-        # Update tip status
-        tip.status = 'succeeded'
-        tip.paid_at = timezone.now()
-        tip.save(update_fields=['status', 'paid_at', 'updated_at'])
-        
-        # Transfer to listener
-        transfer_result = transfer_to_listener_stripe_account(
-            listener=tip.listener,
-            amount=tip.listener_amount,
-            source_type='tip',
-            source_id=tip.id,
-            description=f"Tip from {tip.talker.email}"
-        )
-        
-        return transfer_result
+
+        with transaction.atomic():
+            locked_tip = Tip.objects.select_for_update().get(id=tip.id)
+
+            if locked_tip.stripe_transfer_id:
+                return {
+                    'success': True,
+                    'transfer_id': locked_tip.stripe_transfer_id,
+                    'error': None,
+                    'message': 'Listener payout already transferred for this tip'
+                }
+
+            # Update tip status
+            locked_tip.status = 'succeeded'
+            locked_tip.paid_at = timezone.now()
+            locked_tip.save(update_fields=['status', 'paid_at', 'updated_at'])
+
+            # Transfer to listener
+            transfer_result = transfer_to_listener_stripe_account(
+                listener=locked_tip.listener,
+                amount=locked_tip.listener_amount,
+                source_type='tip',
+                source_id=locked_tip.id,
+                description=f"Tip from {locked_tip.talker.email}"
+            )
+
+            if transfer_result['success']:
+                locked_tip.stripe_transfer_id = transfer_result['transfer_id']
+                locked_tip.save(update_fields=['stripe_transfer_id'])
+
+            return transfer_result
         
     except Exception as e:
         logger.error(f"Error handling tip payment for {tip.id}: {str(e)}")
