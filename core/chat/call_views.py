@@ -1217,6 +1217,7 @@ class CallSessionViewSet(viewsets.ReadOnlyModelViewSet):
                     success_url=f"{getattr(settings, 'FRONTEND_URL2', 'http://localhost:5174/dashboard/talker')}/payment-success-start-call",
                     cancel_url=f"{getattr(settings, 'FRONTEND_URL2', 'http://localhost:5174/dashboard/talker').replace('/dashboard/talker', '')}/call/{call_session_id}",
                     metadata={
+                        'type': 'call_package',
                         'call_package_id': extend_package.id,
                         'call_session_id': call_session_id,
                         'is_extension': 'true',
@@ -1224,6 +1225,13 @@ class CallSessionViewSet(viewsets.ReadOnlyModelViewSet):
                         'listener_id': call_session.listener.id,
                         'package_id': universal_package.id,
                         'duration_minutes': universal_package.duration_minutes
+                    },
+                    payment_intent_data={
+                        'metadata': {
+                            'type': 'call_package',
+                            'call_package_id': extend_package.id,
+                            'call_session_id': call_session_id
+                        }
                     }
                 )
                 

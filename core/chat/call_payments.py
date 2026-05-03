@@ -65,6 +65,7 @@ def create_call_package_payment_intent(call_package, payment_method_id=None):
             'currency': 'usd',
             'customer': stripe_customer.stripe_customer_id,
             'metadata': {
+                'type': 'call_package',
                 'call_package_id': call_package.id,
                 'talker_id': call_package.talker.id,
                 'listener_id': call_package.listener.id,
@@ -101,8 +102,15 @@ def create_call_package_payment_intent(call_package, payment_method_id=None):
             success_url='https://www.ring-mig.com/dashboard/talker/payment-success-start-call',
             cancel_url='https://www.ring-mig.com/payment-cancelled',
             metadata={
+                'type': 'call_package',
                 'call_package_id': call_package.id,
                 'payment_intent_id': payment_intent.id,
+            },
+            payment_intent_data={
+                'metadata': {
+                    'type': 'call_package',
+                    'call_package_id': call_package.id,
+                }
             },
         )
         

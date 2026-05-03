@@ -168,18 +168,32 @@ class BookingViewSet(viewsets.ModelViewSet):
                     success_url=f'{frontend_url}/payment/success?booking_id={booking.id}&session_id={{CHECKOUT_SESSION_ID}}',
                     cancel_url=f'{frontend_url}/payment/cancel?booking_id={booking.id}',
                     metadata={
+                        'type': 'booking',
                         'booking_id': booking.id,
                         'talker_id': talker.id,
                         'listener_id': listener.id,
                         'package_id': package.id,
                     },
+                    payment_intent_data={
+                        'metadata': {
+                            'type': 'booking',
+                            'booking_id': booking.id,
+                            'talker_id': talker.id,
+                            'listener_id': listener.id,
+                            'package_id': package.id,
+                        }
+                    },
                 )
                 
                 # Create payment record with checkout session
                 # Note: stripe_payment_intent_id will be set by webhook after payment succeeds
+                # If Stripe created a PaymentIntent via the Checkout Session,
+                # capture its id so we can link the DB record to it.
+                payment_intent_id = getattr(checkout_session, 'payment_intent', None)
+
                 payment = Payment.objects.create(
                     booking=booking,
-                    stripe_payment_intent_id=None,  # Will be set by webhook
+                    stripe_payment_intent_id=payment_intent_id,
                     stripe_customer_id=stripe_customer.stripe_customer_id,
                     amount=package.price,
                     currency=settings.STRIPE_CURRENCY,
