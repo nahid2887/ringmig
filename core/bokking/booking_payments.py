@@ -4,6 +4,7 @@ import logging
 import stripe
 from django.conf import settings
 from django.utils import timezone
+from decimal import Decimal
 
 from payment.models import StripeCustomer
 
@@ -195,6 +196,74 @@ def process_stripe_refund(booking, amount=None):
         return {
             "success": False,
             "message": str(e)
+        }
+
+
+def reverse_booking_listener_transfer(booking, amount):
+    """Reverse the listener-side Stripe transfer for a booking refund.
+
+    This reverses only the listener share. The admin share is kept in local
+    bookkeeping and reflected in the refund split returned to the caller.
+    """
+    transfer_id = getattr(booking, 'stripe_transfer_id', '')
+
+    if not transfer_id:
+        return {
+            'success': True,
+            'reversal_id': None,
+            'transfer_id': None,
+            'amount': str(amount),
+            'message': 'No listener transfer recorded for this booking',
+        }
+
+    try:
+        amount_decimal = Decimal(str(amount)).quantize(Decimal('0.01'))
+        if amount_decimal <= 0:
+            return {
+                'success': True,
+                'reversal_id': None,
+                'transfer_id': transfer_id,
+                'amount': '0.00',
+                'message': 'No listener transfer reversal required',
+            }
+
+        amount_cents = int(amount_decimal * Decimal('100'))
+
+        reversal = stripe.Transfer.create_reversal(
+            transfer_id,
+            amount=amount_cents,
+            metadata={
+                'source_type': 'session_booking',
+                'booking_id': str(booking.id),
+                'listener_id': booking.listener.id,
+                'refund_amount': str(amount_decimal),
+            },
+        )
+
+        logger.info(
+            'Stripe transfer reversal created for booking %s: reversal_id=%s, transfer_id=%s, amount=%s',
+            booking.id,
+            reversal.id,
+            transfer_id,
+            amount_decimal,
+        )
+
+        return {
+            'success': True,
+            'reversal_id': reversal.id,
+            'transfer_id': transfer_id,
+            'amount': str(amount_decimal),
+            'message': 'Listener transfer reversed successfully',
+        }
+
+    except stripe.error.StripeError as exc:
+        logger.error('Stripe transfer reversal error for booking %s: %s', booking.id, str(exc))
+        return {
+            'success': False,
+            'reversal_id': None,
+            'transfer_id': transfer_id,
+            'amount': str(amount),
+            'message': f'Stripe transfer reversal failed: {str(exc)}',
         }
 
 

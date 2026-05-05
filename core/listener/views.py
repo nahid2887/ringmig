@@ -17,7 +17,7 @@ from .serializers import (ListenerProfileSerializer, ListenerListSerializer, Lis
                          ListenerCallAttemptSerializer, ListenerCallAttemptDetailSerializer,
                          ListenerBalanceSerializer, ListenerTransactionSerializer,
                          RefundBookingSerializer)
-from bokking.booking_payments import process_stripe_refund
+from bokking.booking_payments import process_stripe_refund, reverse_booking_listener_transfer
 
 
 class IsListenerUser(IsAuthenticated):
@@ -761,8 +761,10 @@ class ListenerBalanceViewSet(viewsets.ReadOnlyModelViewSet):
     @action(detail=False, methods=['post'], url_path='refund-booking')
     def refund_booking(self, request):
         """
-        Refund booking earnings from listener balance back to talker.
-        Automatically refunds to talker's original payment card via Stripe.
+        Refund a booking payment back to the talker.
+        The total refund amount is split using the booking's 90/10 pricing snapshot,
+        so the listener share is reversed from Stripe Connect when possible and the
+        admin share is accounted for separately.
 
         Payload:
         {
@@ -776,10 +778,11 @@ class ListenerBalanceViewSet(viewsets.ReadOnlyModelViewSet):
         - Only listener who accepted the booking can refund.
         - Provide EITHER refund_amount OR refund_percent, not both.
         - If neither provided: refunds full remaining refundable amount.
-        - Refund amount deducted from listener available_balance.
+        - Refund amount is applied to the total booking price.
+        - Listener share is reversed from the listener's Stripe transfer when available.
+        - Admin share is kept as platform revenue in the split calculation.
         - Refund automatically processed to talker's payment card via Stripe.
-        - Talker also receives refund credit to available balance.
-        - Cannot refund more than listener earned (100% max).
+        - Cannot refund more than the original booking price.
         """
         if request.user.user_type != 'listener':
             return Response(
@@ -820,12 +823,9 @@ class ListenerBalanceViewSet(viewsets.ReadOnlyModelViewSet):
                         status=status.HTTP_400_BAD_REQUEST,
                     )
 
-                max_refundable = Decimal(str(booking.listener_amount))
+                max_refundable = Decimal(str(booking.price))
                 if max_refundable <= 0:
-                    return Response(
-                        {'error': 'This booking has no refundable listener amount'},
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
+                    return Response({'error': 'This booking has no refundable amount'}, status=status.HTTP_400_BAD_REQUEST)
 
                 already_refunded = Decimal(str(refund_tracker.total_refunded))
                 remaining_refundable = (max_refundable - already_refunded).quantize(Decimal('0.01'))
@@ -875,20 +875,11 @@ class ListenerBalanceViewSet(viewsets.ReadOnlyModelViewSet):
                         status=status.HTTP_400_BAD_REQUEST,
                     )
 
-                listener_balance, _ = ListenerBalance.objects.select_for_update().get_or_create(
-                    listener=request.user,
-                    defaults={'available_balance': Decimal('0.00'), 'total_earned': Decimal('0.00')},
-                )
-
-                if listener_balance.available_balance < refund_amount:
-                    return Response(
-                        {
-                            'error': 'Insufficient listener balance for refund',
-                            'available_balance': str(listener_balance.available_balance),
-                            'required_amount': str(refund_amount),
-                        },
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
+                total_booking_amount = Decimal(str(booking.price))
+                listener_amount = Decimal(str(booking.listener_amount))
+                listener_share_ratio = (listener_amount / total_booking_amount) if total_booking_amount else Decimal('0')
+                listener_refund_amount = (refund_amount * listener_share_ratio).quantize(Decimal('0.01'))
+                admin_refund_amount = (refund_amount - listener_refund_amount).quantize(Decimal('0.01'))
 
                 # Process Stripe refund to talker's payment card
                 stripe_refund = process_stripe_refund(booking, amount=float(refund_amount))
@@ -903,8 +894,51 @@ class ListenerBalanceViewSet(viewsets.ReadOnlyModelViewSet):
                         status=status.HTTP_400_BAD_REQUEST,
                     )
 
-                # Deduct from listener balance
-                listener_balance.deduct(refund_amount)
+                listener_refund_source = None
+                listener_transfer_reversal = None
+
+                if booking.stripe_transfer_id and listener_refund_amount > 0:
+                    transfer_reversal = reverse_booking_listener_transfer(booking, listener_refund_amount)
+                    if transfer_reversal and transfer_reversal.get('success'):
+                        if transfer_reversal.get('transfer_id'):
+                            listener_refund_source = 'stripe_transfer_reversal'
+                        else:
+                            listener_refund_source = None
+                        listener_transfer_reversal = transfer_reversal
+                    else:
+                        logger.warning(
+                            'Stripe transfer reversal failed for booking %s, falling back to listener balance: %s',
+                            booking.id,
+                            transfer_reversal.get('message') if isinstance(transfer_reversal, dict) else 'unknown error',
+                        )
+
+                if listener_refund_source is None and listener_refund_amount > 0:
+                    listener_balance, _ = ListenerBalance.objects.select_for_update().get_or_create(
+                        listener=request.user,
+                        defaults={'available_balance': Decimal('0.00'), 'total_earned': Decimal('0.00')},
+                    )
+
+                    if listener_balance.available_balance < listener_refund_amount:
+                        return Response(
+                            {
+                                'error': 'Insufficient listener balance for refund',
+                                'available_balance': str(listener_balance.available_balance),
+                                'required_amount': str(listener_refund_amount),
+                            },
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
+
+                    if not listener_balance.deduct(listener_refund_amount):
+                        return Response(
+                            {
+                                'error': 'Unable to deduct listener balance for refund',
+                                'available_balance': str(listener_balance.available_balance),
+                                'required_amount': str(listener_refund_amount),
+                            },
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
+
+                    listener_refund_source = 'listener_balance'
 
                 refund_tracker.total_refunded = (already_refunded + refund_amount).quantize(Decimal('0.01'))
                 refund_tracker.save(update_fields=['total_refunded', 'updated_at'])
@@ -915,6 +949,9 @@ class ListenerBalanceViewSet(viewsets.ReadOnlyModelViewSet):
                         'type': 'booking_refund_notification',
                         'booking_id': str(booking.id),
                         'refund_amount': str(refund_amount),
+                        'listener_refund_amount': str(listener_refund_amount),
+                        'admin_refund_amount': str(admin_refund_amount),
+                        'listener_refund_source': listener_refund_source,
                         'listener_id': booking.listener.id,
                         'talker_id': booking.talker.id,
                         'timestamp': timezone.now().isoformat(),
@@ -947,13 +984,13 @@ class ListenerBalanceViewSet(viewsets.ReadOnlyModelViewSet):
                         'message': 'Refund processed successfully',
                         'booking_id': str(booking.id),
                         'refund_amount': str(refund_amount),
+                        'listener_refund_amount': str(listener_refund_amount),
+                        'admin_refund_amount': str(admin_refund_amount),
                         'stripe_refund': stripe_refund if stripe_refund and stripe_refund.get('success') else None,
+                        'listener_transfer_reversal': listener_transfer_reversal,
+                        'listener_refund_source': listener_refund_source,
                         'already_refunded': str(refund_tracker.total_refunded),
                         'remaining_refundable': str((max_refundable - refund_tracker.total_refunded).quantize(Decimal('0.01'))),
-                        'listener_balance': {
-                            'available_balance': str(listener_balance.available_balance),
-                            'total_earned': str(listener_balance.total_earned),
-                        },
                     },
                     status=status.HTTP_200_OK,
                 )
