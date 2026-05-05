@@ -701,6 +701,8 @@ class StripeWebhookView(APIView):
             
             # Update booking status
             payment.booking.status = 'refunded'
+            payment.booking.refund_amount = payment.refund_amount
+            payment.booking.refunded_at = payment.refunded_at
             payment.booking.save()
             
             logger.info(f"Payment refunded for booking {payment.booking.id}")

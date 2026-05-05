@@ -645,7 +645,14 @@ class DashboardTransactionsView(APIView):
                 if tx.price and tx.price > 0:
                     admin_percentage = ((tx.app_fee / tx.price) * Decimal('100')).quantize(Decimal('0.01'))
 
-                display_status = 'accepted' if tx.status == 'completed' else ('rejected' if tx.status == 'cancelled' else tx.status)
+                if tx.status == 'completed':
+                    display_status = 'accepted'
+                elif tx.status == 'refunded':
+                    display_status = 'refunded'
+                elif tx.status == 'cancelled':
+                    display_status = 'rejected'
+                else:
+                    display_status = tx.status
 
                 items.append({
                     'source': 'booking',
@@ -666,7 +673,7 @@ class DashboardTransactionsView(APIView):
                     'platform_commission_percent': str(admin_percentage),
                     'total': str(tx.price),
                     'status': display_status,
-                    'transaction_type': 'booking',
+                    'transaction_type': 'booking_refund' if tx.status == 'refunded' else 'booking',
                     'created_at': tx.created_at.isoformat(),
                     '_sort_ts': tx.created_at.timestamp(),
                 })

@@ -721,6 +721,30 @@ class ListenerBalanceViewSet(viewsets.ReadOnlyModelViewSet):
                 'reference_id': str(booking.id),
             })
 
+        # Refunded bookings (show as debit rows so refunds are visible on the dashboard)
+        refunded_bookings = SessionBooking.objects.filter(
+            listener=user,
+            status='refunded',
+        ).select_related('talker').order_by('-refunded_at', '-updated_at')
+
+        for booking in refunded_bookings:
+            talker_name = booking.talker.full_name or booking.talker.email
+            transaction_at = booking.refunded_at or booking.updated_at
+            refund_amount = booking.refund_amount or booking.listener_amount or Decimal('0.00')
+            transactions.append({
+                'transaction_id': f'booking_refund_{booking.id}',
+                'source': 'booking_refund',
+                'title': f'Refund for session with {talker_name}',
+                'counterparty_name': talker_name,
+                'counterparty_email': booking.talker.email,
+                'amount': -abs(refund_amount),
+                'currency': 'USD',
+                'status': 'refunded',
+                'transaction_type': 'debit',
+                'transaction_at': transaction_at,
+                'reference_id': str(booking.id),
+            })
+
         transactions.sort(key=lambda row: row['transaction_at'], reverse=True)
 
         # Simple pagination
