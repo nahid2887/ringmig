@@ -162,6 +162,7 @@ class TalkerProfileViewSet(viewsets.ModelViewSet):
         search_language = request.query_params.get('language', '').strip().lower()
         talker_language = request.user.language
         applied_language = search_language if search_language else talker_language
+        has_search = bool(search_query or search_language)
         
         # Language code to display name mapping for search matching
         language_names = {
@@ -194,23 +195,9 @@ class TalkerProfileViewSet(viewsets.ModelViewSet):
             if not listener.languages:
                 continue
 
-            # Language filtering logic:
-            # - If explicit language search provided: show listeners who speak that language
-            # - Otherwise: only show listeners who speak the talker's language
-            if search_language:
-                # Explicit language search - show listeners who speak that language (ignore talker's language)
-                language_match = (
-                    search_language in listener.languages or
-                    search_language in (
-                        language_names.get(lang, '')
-                        for lang in listener.languages
-                        if lang in language_names
-                    )
-                )
-                if not language_match:
-                    continue
-            else:
-                # No explicit language search - only show listeners who speak the talker's language
+            if not has_search:
+                # No search query provided - keep the original behavior and only show listeners
+                # who speak the talker's language.
                 talker_lang_match = (
                     talker_language in listener.languages or
                     talker_language in (
@@ -221,28 +208,38 @@ class TalkerProfileViewSet(viewsets.ModelViewSet):
                 )
                 if not talker_lang_match:
                     continue
-            
-            
-            # If search query provided, check if it matches name OR language
-            if search_query:
-                name_match = (search_query in (listener.first_name or '').lower() or 
-                             search_query in (listener.last_name or '').lower())
-                
-                # Check if search matches any language (by code or display name)
-                language_match = False
-                for lang in listener.languages:
-                    # Check if search matches the language code
-                    if search_query in lang.lower():
-                        language_match = True
-                        break
-                    # Check if search matches the language display name
-                    if lang in language_names and search_query in language_names[lang]:
-                        language_match = True
-                        break
-                
-                # Include listener if search matches name OR language
-                if not (name_match or language_match):
-                    continue
+            else:
+                # Search mode - do not restrict by talker's language.
+                # Search should work across the full listener list.
+                if search_language:
+                    language_match = (
+                        search_language in listener.languages or
+                        search_language in (
+                            language_names.get(lang, '')
+                            for lang in listener.languages
+                            if lang in language_names
+                        )
+                    )
+                    if not language_match:
+                        continue
+
+                if search_query:
+                    name_match = (
+                        search_query in (listener.first_name or '').lower() or
+                        search_query in (listener.last_name or '').lower()
+                    )
+
+                    language_match = False
+                    for lang in listener.languages:
+                        if search_query in lang.lower():
+                            language_match = True
+                            break
+                        if lang in language_names and search_query in language_names[lang]:
+                            language_match = True
+                            break
+
+                    if not (name_match or language_match):
+                        continue
             
             filtered_listeners.append(listener)
         
