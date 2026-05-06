@@ -72,8 +72,13 @@ class ListenerProfile(models.Model):
         ('ko', _('Korean')),
         ('ar', _('Arabic')),
         ('hi', _('Hindi')),
+        ('bn', _('Bangla')),
         ('nl', _('Dutch')),
         ('pl', _('Polish')),
+        ('ta', _('Tamil')),
+        ('te', _('Telugu')),
+        ('kn', _('Kannada')),
+        ('ml', _('Malayalam')),
     ]
     
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='listener_profile')
