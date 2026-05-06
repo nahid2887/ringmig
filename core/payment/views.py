@@ -1236,7 +1236,7 @@ class StripeWebhookView(APIView):
             # Handle bokking SessionBooking checkout completion
             if session_booking_id:
                 from bokking.models import SessionBooking
-                from bokking.views import broadcast_availability_update
+                from bokking.views import broadcast_availability_update, _send_booking_completed_notification
                 from payment.listener_payouts import transfer_to_listener_stripe_account
 
                 try:
@@ -1266,6 +1266,8 @@ class StripeWebhookView(APIView):
                             session_booking.stripe_transfer_id = transfer_result['transfer_id']
 
                     session_booking.save(update_fields=['status', 'transaction_id', 'payment_completed_at', 'stripe_transfer_id', 'updated_at'])
+
+                    _send_booking_completed_notification(session_booking)
 
                     if hasattr(session_booking.listener, 'booking_availability'):
                         broadcast_availability_update(session_booking.listener.booking_availability)
