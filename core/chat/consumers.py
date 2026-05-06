@@ -700,7 +700,7 @@ class NotificationConsumer(AsyncWebsocketConsumer):
         await self._save_notification(
             notification_type='booking_reminder',
             title='Booking Reminder',
-            message=event.get('message') or 'Your meeting starts soon',
+            message=event.get('message') or 'Your booking is coming up soon',
             data={
                 'booking_id': event.get('booking_id'),
                 'recipient_role': event.get('recipient_role'),
@@ -825,7 +825,7 @@ class NotificationConsumer(AsyncWebsocketConsumer):
             await self._save_notification(
                 notification_type='booking_reminder',
                 title='Booking Reminder',
-                message='Your meeting starts in 20 minutes',
+                message='Your booking is coming up soon',
                 data={
                     'booking_id': reminder['booking_id'],
                     'recipient_role': reminder['recipient_role'],
@@ -845,7 +845,7 @@ class NotificationConsumer(AsyncWebsocketConsumer):
                 'duration_minutes': reminder['duration_minutes'],
                 'talker': reminder['talker'],
                 'listener': reminder['listener'],
-                'message': 'Your meeting starts in 20 minutes',
+                'message': 'Your booking is coming up soon',
                 'timestamp': now.isoformat(),
             }))
     

@@ -364,7 +364,7 @@ class SessionBooking(models.Model):
         return timezone.now() > self.payment_expires_at
 
     def _build_reminder_subject(self):
-        return 'Reminder: Your session starts in 20 minutes'
+        return 'Reminder: Your session is coming up soon'
 
     def release_listener_earnings_if_due(self):
         """
@@ -414,10 +414,10 @@ class SessionBooking(models.Model):
 
         if recipient_role == 'talker':
             greeting = f"Hello {talker_name},"
-            role_line = f"Your session with listener {listener_name} starts in 20 minutes."
+            role_line = f"Your session with listener {listener_name} is coming up soon."
         else:
             greeting = f"Hello {listener_name},"
-            role_line = f"Your session with talker {talker_name} starts in 20 minutes."
+            role_line = f"Your session with talker {talker_name} is coming up soon."
 
         return (
             f"{greeting}\n\n"
@@ -453,7 +453,7 @@ class SessionBooking(models.Model):
                 'email': self.listener.email,
                 'full_name': listener_name,
             },
-            'message': f'Your booking starts in 20 minutes, {recipient_name}.',
+            'message': f'Your booking is coming up soon, {recipient_name}.',
             'timestamp': timezone.now().isoformat(),
         }
 
