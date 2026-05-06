@@ -110,6 +110,8 @@ class TalkerProfileViewSet(viewsets.ModelViewSet):
                             description='Search by listener first_name or last_name'),
             openapi.Parameter('gender', openapi.IN_QUERY, type=openapi.TYPE_STRING, 
                             description='Filter by gender: male, female, other, prefer_not_to_say'),
+            openapi.Parameter('language', openapi.IN_QUERY, type=openapi.TYPE_STRING, 
+                            description='Filter by listener language (e.g., english, bangla). Shows all listeners speaking this language. If not provided, defaults to talker\'s primary language'),
             openapi.Parameter('page', openapi.IN_QUERY, type=openapi.TYPE_INTEGER, 
                             description='Page number (default: 1)'),
             openapi.Parameter('page_size', openapi.IN_QUERY, type=openapi.TYPE_INTEGER, 
@@ -122,7 +124,8 @@ class TalkerProfileViewSet(viewsets.ModelViewSet):
     def all_listeners(self, request):
         """Get all listeners for talker to browse with pagination.
         
-        Filters listeners who speak the same language as the talker.
+        Filters listeners by language. If language parameter is provided, shows all listeners
+        speaking that language. Otherwise, filters by talker's primary language.
         Supports search by first_name or last_name and filtering by gender.
         Excludes listeners who have blocked this talker.
         Returns paginated results (8 per page by default).
@@ -130,10 +133,11 @@ class TalkerProfileViewSet(viewsets.ModelViewSet):
         Query Parameters:
         - search: Search by first_name or last_name (case-insensitive)
         - gender: Filter by gender (male, female, other, prefer_not_to_say)
+        - language: Filter by listener language (e.g., english, bangla). Shows all listeners speaking this language
         - page: Page number (default: 1)
         - page_size: Items per page (default: 8, max: 50)
         
-        Example: /api/talker/profiles/all_listeners/?search=alice&gender=female&page=1&page_size=8
+        Example with language: /api/talker/profiles/all_listeners/?language=bangla&page=1&page_size=8
         """
         from django.db.models import Q
         from rest_framework.pagination import PageNumberPagination
@@ -143,34 +147,46 @@ class TalkerProfileViewSet(viewsets.ModelViewSet):
             talker=request.user
         ).values_list('listener_id', flat=True)
         
-        # Get talker's language
-        talker_language = request.user.language
-        
         # Get all listeners except those who have blocked this talker
         listeners = ListenerProfile.objects.exclude(
             user_id__in=blocked_by
         ).order_by('-average_rating')
         
-        # Apply search filter if provided
-        search_query = request.query_params.get('search', '').strip()
-        if search_query:
-            listeners = listeners.filter(
-                Q(first_name__icontains=search_query) |
-                Q(last_name__icontains=search_query)
-            )
-        
-        # Apply gender filter if provided
+        # Apply gender filter if provided (via ORM)
         gender = request.query_params.get('gender', '').strip()
         if gender:
             listeners = listeners.filter(gender=gender)
         
-        # Filter by language - listener must speak the talker's language
+        # Get search parameters
+        search_query = request.query_params.get('search', '').strip().lower()
+        search_language = request.query_params.get('language', '').strip().lower()
+        talker_language = request.user.language
+        filter_language = search_language if search_language else talker_language
+        
+        # Filter by language and search in Python
         # This is done in Python to support SQLite (doesn't support JSONField contains lookup)
-        # Only use ListenerProfile.languages - no fallback to User.language
-        listeners = [
-            listener for listener in listeners 
-            if listener.languages and talker_language in listener.languages
-        ]
+        filtered_listeners = []
+        for listener in listeners:
+            if not listener.languages:
+                continue
+            
+            # Must speak the filter_language
+            if filter_language not in listener.languages:
+                continue
+            
+            # If search query provided, check if it matches name OR language
+            if search_query:
+                name_match = (search_query in (listener.first_name or '').lower() or 
+                             search_query in (listener.last_name or '').lower())
+                language_match = any(search_query in lang.lower() for lang in listener.languages)
+                
+                # Include listener if search matches name OR language
+                if not (name_match or language_match):
+                    continue
+            
+            filtered_listeners.append(listener)
+        
+        listeners = filtered_listeners
         
         # Paginate results
         paginator = PageNumberPagination()
@@ -185,6 +201,8 @@ class TalkerProfileViewSet(viewsets.ModelViewSet):
             # Add filters to the response
             paginated_response.data['search_query'] = search_query if search_query else None
             paginated_response.data['gender_filter'] = gender if gender else None
+            paginated_response.data['language_filter'] = search_language if search_language else None
+            paginated_response.data['applied_language'] = filter_language
             return paginated_response
         
         # Fallback if pagination failed (shouldn't happen)
@@ -195,7 +213,9 @@ class TalkerProfileViewSet(viewsets.ModelViewSet):
             'previous': None,
             'results': serializer.data,
             'search_query': search_query if search_query else None,
-            'gender_filter': gender if gender else None
+            'gender_filter': gender if gender else None,
+            'language_filter': search_language if search_language else None,
+            'applied_language': filter_language
         })
 
     @swagger_auto_schema(
