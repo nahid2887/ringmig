@@ -2053,51 +2053,67 @@ class ListenerPayoutViewSet(viewsets.ReadOnlyModelViewSet):
         })
     
     @swagger_auto_schema(
-        operation_description="Get listener's call history - completed, rejected, and upcoming calls"
+        operation_description="Get current user's call history (listener or talker) - completed, rejected, upcoming, and active calls"
     )
     @action(detail=False, methods=['get'])
     def call_history(self, request):
-        """Get listener's call history with completed, rejected, and upcoming calls."""
-        listener = request.user
-        if listener.user_type != 'listener':
+        """Get call history for the authenticated listener or talker."""
+        user = request.user
+        if user.user_type not in ['listener', 'talker']:
             return Response(
-                {'error': 'Only listeners can view call history'},
+                {'error': 'Only talkers and listeners can view call history'},
                 status=status.HTTP_403_FORBIDDEN
             )
+
+        is_listener = user.user_type == 'listener'
+        session_filter = {'listener': user} if is_listener else {'talker': user}
+        package_filter = {'listener': user} if is_listener else {'talker': user}
+        rejection_filter = {'listener': user} if is_listener else {'talker': user}
         
         # Completed calls (call session ended)
         completed_sessions = CallSession.objects.filter(
-            listener=listener,
-            status='ended'
+            **session_filter,
+            status__in=['ended', 'timeout', 'completed']
         ).select_related('talker', 'call_package', 'initial_package').order_by('-ended_at')[:50]
         
         completed_calls = []
         for session in completed_sessions:
             pkg = session.call_package or session.initial_package
+            counterpart = session.talker if is_listener else session.listener
             completed_calls.append({
                 'session_id': session.id,
+                'counterpart_email': counterpart.email,
+                'counterpart_name': getattr(counterpart, 'full_name', counterpart.email),
                 'talker_email': session.talker.email,
                 'talker_name': getattr(session.talker, 'full_name', session.talker.email),
+                'listener_email': session.listener.email,
+                'listener_name': getattr(session.listener, 'full_name', session.listener.email),
                 'duration_minutes': float(session.minutes_used) if session.minutes_used else 0,
                 'total_minutes_purchased': session.total_minutes_purchased,
                 'started_at': session.started_at.isoformat() if session.started_at else None,
                 'ended_at': session.ended_at.isoformat() if session.ended_at else None,
                 'earnings': str(pkg.listener_amount) if pkg else '0.00',
+                'amount_paid': str(pkg.total_amount) if pkg else '0.00',
                 'status': 'completed'
             })
         
         # Rejected calls
         rejected = CallRejection.objects.filter(
-            listener=listener
-        ).select_related('call_package', 'talker').order_by('-rejected_at')[:50]
+            **rejection_filter
+        ).select_related('call_package', 'talker', 'listener').order_by('-rejected_at')[:50]
         
         rejected_calls = []
         for rejection in rejected:
+            counterpart = rejection.talker if is_listener else rejection.listener
             rejected_calls.append({
                 'rejection_id': rejection.id,
                 'call_package_id': rejection.call_package.id if rejection.call_package else None,
+                'counterpart_email': counterpart.email,
+                'counterpart_name': getattr(counterpart, 'full_name', counterpart.email),
                 'talker_email': rejection.talker.email,
                 'talker_name': getattr(rejection.talker, 'full_name', rejection.talker.email),
+                'listener_email': rejection.listener.email,
+                'listener_name': getattr(rejection.listener, 'full_name', rejection.listener.email),
                 'reason': rejection.reason,
                 'notes': rejection.notes,
                 'rejected_at': rejection.rejected_at.isoformat(),
@@ -2108,16 +2124,21 @@ class ListenerPayoutViewSet(viewsets.ReadOnlyModelViewSet):
         
         # Upcoming/pending calls (confirmed packages not yet started)
         upcoming_packages = CallPackage.objects.filter(
-            listener=listener,
+            **package_filter,
             status__in=['confirmed', 'pending']
-        ).select_related('talker', 'package').order_by('-created_at')[:50]
+        ).select_related('talker', 'listener', 'package').order_by('-created_at')[:50]
         
         upcoming_calls = []
         for pkg in upcoming_packages:
+            counterpart = pkg.talker if is_listener else pkg.listener
             upcoming_calls.append({
                 'package_id': pkg.id,
+                'counterpart_email': counterpart.email,
+                'counterpart_name': getattr(counterpart, 'full_name', counterpart.email),
                 'talker_email': pkg.talker.email,
                 'talker_name': getattr(pkg.talker, 'full_name', pkg.talker.email),
+                'listener_email': pkg.listener.email,
+                'listener_name': getattr(pkg.listener, 'full_name', pkg.listener.email),
                 'package_name': pkg.package.name if pkg.package else 'Unknown',
                 'duration_minutes': pkg.package.duration_minutes if pkg.package else 0,
                 'amount': str(pkg.total_amount),
@@ -2128,20 +2149,27 @@ class ListenerPayoutViewSet(viewsets.ReadOnlyModelViewSet):
         
         # Active calls
         active_sessions = CallSession.objects.filter(
-            listener=listener,
+            **session_filter,
             status__in=['connecting', 'active']
         ).select_related('talker', 'call_package').order_by('-started_at')
         
         active_calls = []
         for session in active_sessions:
             pkg = session.call_package or session.initial_package
+            counterpart = session.talker if is_listener else session.listener
             active_calls.append({
                 'session_id': session.id,
+                'counterpart_email': counterpart.email,
+                'counterpart_name': getattr(counterpart, 'full_name', counterpart.email),
                 'talker_email': session.talker.email,
                 'talker_name': getattr(session.talker, 'full_name', session.talker.email),
+                'listener_email': session.listener.email,
+                'listener_name': getattr(session.listener, 'full_name', session.listener.email),
                 'minutes_remaining': session.get_remaining_minutes(),
                 'total_minutes_purchased': session.total_minutes_purchased,
                 'started_at': session.started_at.isoformat() if session.started_at else None,
+                'amount_paid': str(pkg.total_amount) if pkg else '0.00',
+                'earnings': str(pkg.listener_amount) if pkg else '0.00',
                 'status': session.status
             })
         
