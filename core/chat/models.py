@@ -229,6 +229,7 @@ class Notification(models.Model):
         ('booking_deleted', _('Booking Deleted')),
         ('booking_reminder', _('Booking Reminder')),
         ('pending_conversation', _('Pending Conversation')),
+        ('booking_completed', _('Booking Completed')),
         ('message_received', _('Message Received')),
         ('call_started', _('Call Started')),
         ('call_ended', _('Call Ended')),

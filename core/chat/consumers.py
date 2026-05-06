@@ -724,6 +724,39 @@ class NotificationConsumer(AsyncWebsocketConsumer):
             'timestamp': event.get('timestamp'),
         }))
 
+    async def booking_completed_notification(self, event):
+        """Send booking completed notification to the listener."""
+        await self._save_notification(
+            notification_type='booking_completed',
+            title='Booking Completed',
+            message=event.get('message') or 'Your booking has been confirmed',
+            data={
+                'booking_id': event.get('booking_id'),
+                'session_id': event.get('session_id'),
+                'talker_id': event.get('talker', {}).get('id') if event.get('talker') else event.get('talker_id'),
+                'listener_id': event.get('listener', {}).get('id') if event.get('listener') else event.get('listener_id'),
+                'booking_date': event.get('booking_date'),
+                'start_time': event.get('start_time'),
+                'end_time': event.get('end_time'),
+                'duration_minutes': event.get('duration_minutes'),
+                'price': event.get('price'),
+            },
+        )
+        await self.send(text_data=json.dumps({
+            'type': 'booking_completed_notification',
+            'booking_id': event.get('booking_id'),
+            'session_id': event.get('session_id'),
+            'booking_date': event.get('booking_date'),
+            'start_time': event.get('start_time'),
+            'end_time': event.get('end_time'),
+            'duration_minutes': event.get('duration_minutes'),
+            'talker': event.get('talker'),
+            'listener': event.get('listener'),
+            'price': event.get('price'),
+            'message': event.get('message'),
+            'timestamp': event.get('timestamp'),
+        }))
+
     async def booking_refund_notification(self, event):
         """Send booking refund notification to user."""
         await self._save_notification(

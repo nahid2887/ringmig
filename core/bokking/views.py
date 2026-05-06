@@ -959,6 +959,42 @@ def _build_base_availability_time(listener, days=7):
     return rows
 
 
+def _send_booking_completed_notification(booking):
+    """Notify the listener that a booking has been completed."""
+    channel_layer = get_channel_layer()
+    if not channel_layer:
+        return
+
+    talker_name = booking.talker.full_name or booking.talker.email
+    listener_name = booking.listener.full_name or booking.listener.email
+
+    async_to_sync(channel_layer.group_send)(
+        f'user_{booking.listener.id}_notifications',
+        {
+            'type': 'booking_completed_notification',
+            'booking_id': str(booking.id),
+            'session_id': str(booking.id),
+            'booking_date': booking.booking_date.isoformat(),
+            'start_time': booking.start_time.strftime('%H:%M:%S'),
+            'end_time': booking.end_time.strftime('%H:%M:%S'),
+            'duration_minutes': booking.duration_minutes,
+            'talker': {
+                'id': booking.talker_id,
+                'email': booking.talker.email,
+                'full_name': talker_name,
+            },
+            'listener': {
+                'id': booking.listener_id,
+                'email': booking.listener.email,
+                'full_name': listener_name,
+            },
+            'price': str(booking.price),
+            'message': f'Your booking with {talker_name} is confirmed.',
+            'timestamp': timezone.now().isoformat(),
+        },
+    )
+
+
 def _group_by_day_of_week(data_rows):
     """
     Reorganize flat date list into day-of-week groups.
@@ -1619,6 +1655,7 @@ class SessionBookingViewSet(viewsets.ModelViewSet):
             booking.transaction_id = payment_data.get('payment_intent_id')
             booking.payment_completed_at = timezone.now()
             booking.save(update_fields=['status', 'transaction_id', 'payment_completed_at', 'updated_at'])
+            _send_booking_completed_notification(booking)
 
         if hasattr(listener, 'booking_availability'):
             broadcast_availability_update(listener.booking_availability)
@@ -1678,6 +1715,7 @@ class SessionBookingViewSet(viewsets.ModelViewSet):
             booking.transaction_id = payment_intent_id
             booking.payment_completed_at = timezone.now()
             booking.save(update_fields=['status', 'transaction_id', 'payment_completed_at', 'updated_at'])
+            _send_booking_completed_notification(booking)
 
             if hasattr(booking.listener, 'booking_availability'):
                 broadcast_availability_update(booking.listener.booking_availability)
