@@ -161,6 +161,7 @@ class TalkerProfileViewSet(viewsets.ModelViewSet):
         search_query = request.query_params.get('search', '').strip().lower()
         search_language = request.query_params.get('language', '').strip().lower()
         talker_language = request.user.language
+        applied_language = search_language if search_language else talker_language
         
         # Language code to display name mapping for search matching
         language_names = {
@@ -192,22 +193,34 @@ class TalkerProfileViewSet(viewsets.ModelViewSet):
         for listener in listeners:
             if not listener.languages:
                 continue
-            
-                # Language filtering logic:
-                # - If explicit language search provided: show listeners who speak that language
-                # - Otherwise: only show listeners who speak the talker's language
-                if search_language:
-                    # Explicit language search - show listeners who speak that language (ignore talker's language)
-                    language_match = (search_language in listener.languages or 
-                                     search_language in (language_names.get(lang, '') for lang in listener.languages if lang in language_names))
-                    if not language_match:
-                        continue
-                else:
-                    # No explicit language search - only show listeners who speak the talker's language
-                    talker_lang_match = (talker_language in listener.languages or 
-                                        talker_language in (language_names.get(lang, '') for lang in listener.languages if lang in language_names))
-                    if not talker_lang_match:
-                        continue
+
+            # Language filtering logic:
+            # - If explicit language search provided: show listeners who speak that language
+            # - Otherwise: only show listeners who speak the talker's language
+            if search_language:
+                # Explicit language search - show listeners who speak that language (ignore talker's language)
+                language_match = (
+                    search_language in listener.languages or
+                    search_language in (
+                        language_names.get(lang, '')
+                        for lang in listener.languages
+                        if lang in language_names
+                    )
+                )
+                if not language_match:
+                    continue
+            else:
+                # No explicit language search - only show listeners who speak the talker's language
+                talker_lang_match = (
+                    talker_language in listener.languages or
+                    talker_language in (
+                        language_names.get(lang, '')
+                        for lang in listener.languages
+                        if lang in language_names
+                    )
+                )
+                if not talker_lang_match:
+                    continue
             
             
             # If search query provided, check if it matches name OR language
@@ -249,7 +262,7 @@ class TalkerProfileViewSet(viewsets.ModelViewSet):
             paginated_response.data['search_query'] = search_query if search_query else None
             paginated_response.data['gender_filter'] = gender if gender else None
             paginated_response.data['language_filter'] = search_language if search_language else None
-            paginated_response.data['applied_language'] = filter_language
+            paginated_response.data['applied_language'] = applied_language
             return paginated_response
         
         # Fallback if pagination failed (shouldn't happen)
