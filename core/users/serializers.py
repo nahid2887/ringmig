@@ -118,11 +118,29 @@ class UserLoginSerializer(serializers.Serializer):
 
 class UserSerializer(serializers.ModelSerializer):
     """Serializer for user details."""
+    profile_image = serializers.SerializerMethodField()
 
     class Meta:
         model = User
-        fields = ['id', 'email', 'full_name', 'user_type', 'phone_number', 'birthday', 'language', 'is_active', 'is_verified', 'created_at']
+        fields = ['id', 'email', 'full_name', 'user_type', 'phone_number', 'birthday', 'language', 'profile_image', 'is_active', 'is_verified', 'created_at']
         read_only_fields = ['id', 'email', 'is_active', 'is_verified', 'created_at']
+
+    def get_profile_image(self, obj):
+        """Return absolute URL for the user's profile image from role profile."""
+        image_field = None
+
+        if hasattr(obj, 'talker_profile') and obj.talker_profile and obj.talker_profile.profile_image:
+            image_field = obj.talker_profile.profile_image
+        elif hasattr(obj, 'listener_profile') and obj.listener_profile and obj.listener_profile.profile_image:
+            image_field = obj.listener_profile.profile_image
+
+        if not image_field:
+            return None
+
+        request = self.context.get('request')
+        if request:
+            return request.build_absolute_uri(image_field.url)
+        return image_field.url
 
 
 class ChangePasswordSerializer(serializers.Serializer):
