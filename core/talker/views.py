@@ -1046,10 +1046,19 @@ class TalkerBalanceViewSet(viewsets.ReadOnlyModelViewSet):
                 'review': rating_obj.review,
                 'created_at': rating_obj.created_at.isoformat(),
                 'updated_at': rating_obj.updated_at.isoformat(),
+                'message': 'Rating saved successfully'
             }, status=status.HTTP_201_CREATED)
         except Exception as exc:
+            import traceback
+            error_trace = traceback.format_exc()
+            print(f"ERROR in rate_listener: {str(exc)}")
+            print(error_trace)
             return Response(
-                {'error': f'Failed to rate listener: {str(exc)}'},
+                {
+                    'error': str(exc),
+                    'error_type': type(exc).__name__,
+                    'traceback': error_trace
+                },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
