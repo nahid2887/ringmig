@@ -7,6 +7,7 @@ from django.conf import settings
 from django.utils import timezone
 from django.db import transaction
 from django.views.decorators.csrf import csrf_exempt
+from django.shortcuts import redirect
 import stripe
 import logging
 import os
@@ -1042,30 +1043,16 @@ class ListenerConnectReturnView(APIView):
                 listener_account.save()
                 logger.info(f"Listener account verified: {user.id}")
             
-            next_steps = []
+            # If the account is fully verified, redirect the user to the listener dashboard
+            # Otherwise redirect to the dashboard with a pending indicator so the frontend can show status
             if is_verified:
-                next_steps = [
-                    "✓ Your account is connected",
-                    "✓ You can start receiving payouts",
-                    "✓ Earnings from bookings will be transferred to your bank account"
-                ]
+                listener_account.is_verified = True
+                listener_account.save()
+                logger.info(f"Listener account verified: {user.id}")
+                return redirect('https://www.ring-mig.com/dashboard/listener')
             else:
-                next_steps = [
-                    f"⏳ Complete verification (required by: {account.requirements.current_deadline})" if account.requirements else "⏳ Pending verification",
-                    "⚠ Some account details are pending" if not account.details_submitted else "✓ Details submitted",
-                    "⚠ Payouts not yet enabled" if not account.payouts_enabled else "✓ Payouts enabled"
-                ]
-            
-            return Response({
-                'success': is_verified,
-                'message': 'Your Stripe account setup completed!' if is_verified else 'Your Stripe account setup is in progress.',
-                'is_verified': is_verified,
-                'payouts_enabled': account.payouts_enabled,
-                'charges_enabled': account.charges_enabled,
-                'details_submitted': account.details_submitted,
-                'account_id': listener_account.stripe_account_id,
-                'next_steps': next_steps
-            })
+                pending_url = 'https://www.ring-mig.com/dashboard/listener?connected=pending'
+                return redirect(pending_url)
             
         except StripeListenerAccount.DoesNotExist:
             return Response(
