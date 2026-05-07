@@ -977,6 +977,7 @@ class TalkerBalanceViewSet(viewsets.ReadOnlyModelViewSet):
         """
         listener_id = request.data.get('listener_id')
         rating = request.data.get('rating')
+        review = request.data.get('review', '')
         
         if not listener_id:
             return Response(
@@ -1018,25 +1019,22 @@ class TalkerBalanceViewSet(viewsets.ReadOnlyModelViewSet):
                     status=status.HTTP_404_NOT_FOUND
                 )
         
-        # Check if talker already rated this listener
-        existing_rating = ListenerRating.objects.filter(
-            listener=listener_profile, talker=request.user
-        ).first()
-        
-        if existing_rating:
-            # Update existing rating
-            serializer = ListenerRatingSerializer(existing_rating, data=request.data, partial=True)
-        else:
-            # Create new rating
-            serializer = ListenerRatingSerializer(data=request.data)
-        
-        if serializer.is_valid():
-            if not existing_rating:
-                serializer.save(listener=listener_profile, talker=request.user)
-            else:
-                serializer.save()
+        try:
+            rating_obj, _ = ListenerRating.objects.update_or_create(
+                listener=listener_profile,
+                talker=request.user,
+                defaults={
+                    'rating': rating_int,
+                    'review': review or ''
+                }
+            )
+            serializer = ListenerRatingSerializer(rating_obj, context={'request': request})
             return Response(serializer.data, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:
+            return Response(
+                {'error': f'Failed to rate listener: {str(exc)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
     @swagger_auto_schema(
         operation_description="Get all reviews/ratings for a listener",
