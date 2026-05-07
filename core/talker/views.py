@@ -1,5 +1,5 @@
 from rest_framework import viewsets, status
-from rest_framework.decorators import action
+from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
@@ -32,6 +32,79 @@ class IsTalkerUser(IsAuthenticated):
     def has_object_permission(self, request, view, obj):
         """Only allow talkers to access their own profile."""
         return obj.user == request.user
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def rate_listener_endpoint(request):
+    """Standalone endpoint for listener rating to avoid router/action dispatch issues."""
+    if request.user.user_type != 'talker':
+        return Response(
+            {'error': 'Only talkers can rate listeners'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+
+    listener_id = request.data.get('listener_id')
+    rating = request.data.get('rating')
+    review = request.data.get('review', '')
+
+    if not listener_id:
+        return Response({'error': 'listener_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+    if rating is None:
+        return Response({'error': 'rating is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        rating_int = int(rating)
+    except (TypeError, ValueError):
+        return Response({'error': 'rating must be an integer'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if rating_int < 1 or rating_int > 5:
+        return Response({'error': 'rating must be between 1 and 5'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        try:
+            listener_profile = ListenerProfile.objects.get(id=listener_id)
+        except ListenerProfile.DoesNotExist:
+            listener_profile = ListenerProfile.objects.get(user_id=listener_id)
+    except ListenerProfile.DoesNotExist:
+        return Response({'error': f'Listener with ID {listener_id} not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    try:
+        rating_obj = ListenerRating.objects.filter(
+            listener=listener_profile,
+            talker=request.user
+        ).first()
+
+        if rating_obj:
+            rating_obj.rating = rating_int
+            rating_obj.review = review or ''
+            rating_obj.save()
+        else:
+            rating_obj = ListenerRating.objects.create(
+                listener=listener_profile,
+                talker=request.user,
+                rating=rating_int,
+                review=review or ''
+            )
+
+        return Response({
+            'id': rating_obj.id,
+            'listener_id': listener_profile.id,
+            'talker_id': request.user.id,
+            'rating': rating_obj.rating,
+            'review': rating_obj.review,
+            'created_at': rating_obj.created_at.isoformat() if rating_obj.created_at else None,
+            'updated_at': rating_obj.updated_at.isoformat() if rating_obj.updated_at else None,
+            'message': 'Rating saved successfully'
+        }, status=status.HTTP_201_CREATED)
+    except Exception as exc:
+        return Response(
+            {
+                'error': str(exc),
+                'error_type': type(exc).__name__
+            },
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
 
 
 class TalkerProfileViewSet(viewsets.ModelViewSet):
