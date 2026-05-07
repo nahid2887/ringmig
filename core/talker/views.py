@@ -1020,14 +1020,23 @@ class TalkerBalanceViewSet(viewsets.ReadOnlyModelViewSet):
                 )
         
         try:
-            rating_obj, _ = ListenerRating.objects.update_or_create(
+            rating_obj = ListenerRating.objects.filter(
                 listener=listener_profile,
-                talker=request.user,
-                defaults={
-                    'rating': rating_int,
-                    'review': review or ''
-                }
-            )
+                talker=request.user
+            ).order_by('id').first()
+
+            if rating_obj:
+                rating_obj.rating = rating_int
+                rating_obj.review = review or ''
+                rating_obj.save()
+            else:
+                rating_obj = ListenerRating.objects.create(
+                    listener=listener_profile,
+                    talker=request.user,
+                    rating=rating_int,
+                    review=review or ''
+                )
+
             serializer = ListenerRatingSerializer(rating_obj, context={'request': request})
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         except Exception as exc:
