@@ -975,69 +975,66 @@ class TalkerBalanceViewSet(viewsets.ReadOnlyModelViewSet):
             "review": "Great listener, very empathetic!"
         }
         """
-        listener_id = request.data.get('listener_id')
-        rating = request.data.get('rating')
-        review = request.data.get('review', '')
-        
-        if not listener_id:
-            return Response(
-                {'error': 'listener_id is required'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        if not rating:
-            return Response(
-                {'error': 'rating is required'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Validate rating is between 1-5
+        import traceback
         try:
-            rating_int = int(rating)
-            if rating_int < 1 or rating_int > 5:
+            listener_id = request.data.get('listener_id')
+            rating = request.data.get('rating')
+            review = request.data.get('review', '')
+            
+            if not listener_id:
                 return Response(
-                    {'error': 'rating must be between 1 and 5'},
+                    {'error': 'listener_id is required'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-        except (ValueError, TypeError):
-            return Response(
-                {'error': 'rating must be an integer'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Try to get listener by ListenerProfile ID first, then by User ID
-        listener_profile = None
-        try:
-            listener_profile = ListenerProfile.objects.get(id=listener_id)
-        except ListenerProfile.DoesNotExist:
-            # Try by user_id
-            try:
-                listener_profile = ListenerProfile.objects.get(user_id=listener_id)
-            except ListenerProfile.DoesNotExist:
+            
+            if not rating:
                 return Response(
-                    {'error': f'Listener with ID {listener_id} not found'},
-                    status=status.HTTP_404_NOT_FOUND
+                    {'error': 'rating is required'},
+                    status=status.HTTP_400_BAD_REQUEST
                 )
-        
-        try:
-            rating_obj = ListenerRating.objects.filter(
+            
+            # Validate rating is between 1-5
+            try:
+                rating_int = int(rating)
+                if rating_int < 1 or rating_int > 5:
+                    return Response(
+                        {'error': 'rating must be between 1 and 5'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            except (ValueError, TypeError):
+                return Response(
+                    {'error': 'rating must be an integer'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Try to get listener by ListenerProfile ID first, then by User ID
+            listener_profile = None
+            try:
+                listener_profile = ListenerProfile.objects.get(id=listener_id)
+            except ListenerProfile.DoesNotExist:
+                # Try by user_id
+                try:
+                    listener_profile = ListenerProfile.objects.get(user_id=listener_id)
+                except ListenerProfile.DoesNotExist:
+                    return Response(
+                        {'error': f'Listener with ID {listener_id} not found'},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+            
+            # Delete any existing rating and create new one (simpler approach)
+            ListenerRating.objects.filter(
                 listener=listener_profile,
                 talker=request.user
-            ).first()
+            ).delete()
+            
+            rating_obj = ListenerRating.objects.create(
+                listener=listener_profile,
+                talker=request.user,
+                rating=rating_int,
+                review=review if review else ''
+            )
 
-            if rating_obj:
-                rating_obj.rating = rating_int
-                rating_obj.review = review
-                rating_obj.save()
-            else:
-                rating_obj = ListenerRating.objects.create(
-                    listener=listener_profile,
-                    talker=request.user,
-                    rating=rating_int,
-                    review=review
-                )
-
-            # Return response without serializer to avoid serialization errors
+            # Return response
             return Response({
                 'id': rating_obj.id,
                 'listener_id': listener_profile.id,
@@ -1049,15 +1046,12 @@ class TalkerBalanceViewSet(viewsets.ReadOnlyModelViewSet):
                 'message': 'Rating saved successfully'
             }, status=status.HTTP_201_CREATED)
         except Exception as exc:
-            import traceback
             error_trace = traceback.format_exc()
-            print(f"ERROR in rate_listener: {str(exc)}")
-            print(error_trace)
             return Response(
                 {
                     'error': str(exc),
                     'error_type': type(exc).__name__,
-                    'traceback': error_trace
+                    'message': 'Check error_type and error fields for details'
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
