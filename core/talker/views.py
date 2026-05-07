@@ -1021,12 +1021,13 @@ class TalkerBalanceViewSet(viewsets.ReadOnlyModelViewSet):
                         status=status.HTTP_404_NOT_FOUND
                     )
             
-            # Delete any existing rating and create new one (simpler approach)
+            # Delete existing rating if it exists
             ListenerRating.objects.filter(
                 listener=listener_profile,
                 talker=request.user
             ).delete()
             
+            # Create new rating
             rating_obj = ListenerRating.objects.create(
                 listener=listener_profile,
                 talker=request.user,
@@ -1041,8 +1042,8 @@ class TalkerBalanceViewSet(viewsets.ReadOnlyModelViewSet):
                 'talker_id': request.user.id,
                 'rating': rating_obj.rating,
                 'review': rating_obj.review,
-                'created_at': rating_obj.created_at.isoformat(),
-                'updated_at': rating_obj.updated_at.isoformat(),
+                'created_at': rating_obj.created_at.isoformat() if rating_obj.created_at else None,
+                'updated_at': rating_obj.updated_at.isoformat() if rating_obj.updated_at else None,
                 'message': 'Rating saved successfully'
             }, status=status.HTTP_201_CREATED)
         except Exception as exc:
