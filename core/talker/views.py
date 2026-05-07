@@ -40,6 +40,7 @@ class TalkerProfileViewSet(viewsets.ModelViewSet):
     serializer_class = TalkerProfileSerializer
     permission_classes = [IsTalkerUser]
     parser_classes = (JSONParser, MultiPartParser, FormParser)
+    lookup_value_regex = r'\d+'
 
     def get_queryset(self):
         """Return only the authenticated user's profile."""
