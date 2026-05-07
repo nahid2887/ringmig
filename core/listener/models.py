@@ -167,8 +167,14 @@ class ListenerRating(models.Model):
     
     def save(self, *args, **kwargs):
         super().save(*args, **kwargs)
-        # Update the listener's average rating
-        self.listener.update_average_rating()
+        # Update the listener's average rating (wrapped in try-except to prevent save failures)
+        try:
+            self.listener.update_average_rating()
+        except Exception as e:
+            # Log error but don't fail the save
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Failed to update average rating for listener {self.listener.id}: {str(e)}")
 
 
 class ListenerBalance(models.Model):
