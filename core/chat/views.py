@@ -283,9 +283,10 @@ class ConversationViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         """Return conversations for the authenticated user."""
         user = self.request.user
+        # Exclude conversations that were rejected by the listener
         return Conversation.objects.filter(
             Q(listener=user) | Q(talker=user)
-        ).distinct()
+        ).exclude(status='rejected').distinct()
     
     @action(detail=False, methods=['get'])
     def pending_requests(self, request):
