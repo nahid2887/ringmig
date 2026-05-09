@@ -16,7 +16,22 @@ def create_listener_profile(sender, instance, created, **kwargs):
     """
     if created and instance.user_type == 'listener':
         from .models import ListenerProfile, ListenerBalance
-        ListenerProfile.objects.get_or_create(user=instance)
+        
+        # Parse full_name into first_name and last_name
+        first_name = ''
+        last_name = ''
+        if instance.full_name:
+            parts = instance.full_name.strip().split(None, 1)
+            first_name = parts[0] if parts else ''
+            last_name = parts[1] if len(parts) > 1 else ''
+        
+        ListenerProfile.objects.get_or_create(
+            user=instance,
+            defaults={
+                'first_name': first_name,
+                'last_name': last_name
+            }
+        )
         # Also create balance account
         ListenerBalance.objects.get_or_create(
             listener=instance,
@@ -32,7 +47,21 @@ def save_listener_profile(sender, instance, **kwargs):
     if instance.user_type == 'listener':
         from .models import ListenerProfile, ListenerBalance
         if not hasattr(instance, 'listener_profile'):
-            ListenerProfile.objects.get_or_create(user=instance)
+            # Parse full_name into first_name and last_name
+            first_name = ''
+            last_name = ''
+            if instance.full_name:
+                parts = instance.full_name.strip().split(None, 1)
+                first_name = parts[0] if parts else ''
+                last_name = parts[1] if len(parts) > 1 else ''
+            
+            ListenerProfile.objects.get_or_create(
+                user=instance,
+                defaults={
+                    'first_name': first_name,
+                    'last_name': last_name
+                }
+            )
         if not hasattr(instance, 'balance_account'):
             ListenerBalance.objects.get_or_create(
                 listener=instance,
