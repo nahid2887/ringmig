@@ -39,18 +39,18 @@ class IsTalkerUser(IsAuthenticated):
 def rate_listener_endpoint(request):
     """Standalone endpoint for listener rating to avoid router/action dispatch issues."""
     if request.user.user_type != 'talker':
-        return Response(
-            {'error': 'Only talkers can rate listeners'},
-            status=status.HTTP_403_FORBIDDEN
-        try:
-            # Frontend list/detail payloads expose the listener's user ID as `id`,
-            # so prefer `user_id` first and fall back to the profile primary key.
-            try:
-                listener_profile = ListenerProfile.objects.get(user_id=listener_id)
-            except ListenerProfile.DoesNotExist:
-                listener_profile = ListenerProfile.objects.get(id=listener_id)
-        except ListenerProfile.DoesNotExist:
-            return Response({'error': f'Listener with ID {listener_id} not found'}, status=status.HTTP_404_NOT_FOUND)
+        return Response({'error': 'Only talkers can rate listeners'}, status=status.HTTP_403_FORBIDDEN)
+
+    listener_id = request.data.get('listener_id')
+    rating = request.data.get('rating')
+    review = request.data.get('review', '')
+
+    if not listener_id:
+        return Response({'error': 'listener_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+    if rating is None:
+        return Response({'error': 'rating is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
         rating_int = int(rating)
     except (TypeError, ValueError):
         return Response({'error': 'rating must be an integer'}, status=status.HTTP_400_BAD_REQUEST)
@@ -59,18 +59,16 @@ def rate_listener_endpoint(request):
         return Response({'error': 'rating must be between 1 and 5'}, status=status.HTTP_400_BAD_REQUEST)
 
     try:
+        # Prefer resolving by user_id (frontend uses user id as `id`), fall back to profile id
         try:
-            listener_profile = ListenerProfile.objects.get(id=listener_id)
-        except ListenerProfile.DoesNotExist:
             listener_profile = ListenerProfile.objects.get(user_id=listener_id)
+        except ListenerProfile.DoesNotExist:
+            listener_profile = ListenerProfile.objects.get(id=listener_id)
     except ListenerProfile.DoesNotExist:
         return Response({'error': f'Listener with ID {listener_id} not found'}, status=status.HTTP_404_NOT_FOUND)
 
     try:
-        rating_obj = ListenerRating.objects.filter(
-            listener=listener_profile,
-            talker=request.user
-        ).first()
+        rating_obj = ListenerRating.objects.filter(listener=listener_profile, talker=request.user).first()
 
         if rating_obj:
             rating_obj.rating = rating_int
@@ -95,13 +93,7 @@ def rate_listener_endpoint(request):
             'message': 'Rating saved successfully'
         }, status=status.HTTP_201_CREATED)
     except Exception as exc:
-        return Response(
-            {
-                'error': str(exc),
-                'error_type': type(exc).__name__
-            },
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR
-        )
+        return Response({'error': str(exc), 'error_type': type(exc).__name__}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class TalkerProfileViewSet(viewsets.ModelViewSet):
