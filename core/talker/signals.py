@@ -9,14 +9,42 @@ from decimal import Decimal
 def create_talker_profile(sender, instance, created, **kwargs):
     """Auto-create TalkerProfile when a new user with talker role is created."""
     if created and instance.user_type == 'talker':
-        TalkerProfile.objects.get_or_create(user=instance)
+        # Parse full_name into first_name and last_name
+        first_name = ''
+        last_name = ''
+        if instance.full_name:
+            parts = instance.full_name.strip().split(None, 1)
+            first_name = parts[0] if parts else ''
+            last_name = parts[1] if len(parts) > 1 else ''
+        
+        TalkerProfile.objects.get_or_create(
+            user=instance,
+            defaults={
+                'first_name': first_name,
+                'last_name': last_name
+            }
+        )
 
 
 @receiver(post_save, sender=User)
 def update_or_create_talker_profile(sender, instance, created, **kwargs):
     """Auto-create or update TalkerProfile when user_type changes to talker."""
     if not created and instance.user_type == 'talker':
-        TalkerProfile.objects.get_or_create(user=instance)
+        # Parse full_name into first_name and last_name
+        first_name = ''
+        last_name = ''
+        if instance.full_name:
+            parts = instance.full_name.strip().split(None, 1)
+            first_name = parts[0] if parts else ''
+            last_name = parts[1] if len(parts) > 1 else ''
+        
+        TalkerProfile.objects.get_or_create(
+            user=instance,
+            defaults={
+                'first_name': first_name,
+                'last_name': last_name
+            }
+        )
 
 
 @receiver(post_save, sender=User)
