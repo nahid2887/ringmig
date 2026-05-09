@@ -42,18 +42,15 @@ def rate_listener_endpoint(request):
         return Response(
             {'error': 'Only talkers can rate listeners'},
             status=status.HTTP_403_FORBIDDEN
-        )
-
-    listener_id = request.data.get('listener_id')
-    rating = request.data.get('rating')
-    review = request.data.get('review', '')
-
-    if not listener_id:
-        return Response({'error': 'listener_id is required'}, status=status.HTTP_400_BAD_REQUEST)
-    if rating is None:
-        return Response({'error': 'rating is required'}, status=status.HTTP_400_BAD_REQUEST)
-
-    try:
+        try:
+            # Frontend list/detail payloads expose the listener's user ID as `id`,
+            # so prefer `user_id` first and fall back to the profile primary key.
+            try:
+                listener_profile = ListenerProfile.objects.get(user_id=listener_id)
+            except ListenerProfile.DoesNotExist:
+                listener_profile = ListenerProfile.objects.get(id=listener_id)
+        except ListenerProfile.DoesNotExist:
+            return Response({'error': f'Listener with ID {listener_id} not found'}, status=status.HTTP_404_NOT_FOUND)
         rating_int = int(rating)
     except (TypeError, ValueError):
         return Response({'error': 'rating must be an integer'}, status=status.HTTP_400_BAD_REQUEST)
@@ -1080,14 +1077,14 @@ class TalkerBalanceViewSet(viewsets.ReadOnlyModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
-            # Try to get listener by ListenerProfile ID first, then by User ID
+            # Frontend list/detail payloads expose the listener's user ID as `id`,
+            # so prefer `user_id` first and fall back to the profile primary key.
             listener_profile = None
             try:
-                listener_profile = ListenerProfile.objects.get(id=listener_id)
+                listener_profile = ListenerProfile.objects.get(user_id=listener_id)
             except ListenerProfile.DoesNotExist:
-                # Try by user_id
                 try:
-                    listener_profile = ListenerProfile.objects.get(user_id=listener_id)
+                    listener_profile = ListenerProfile.objects.get(id=listener_id)
                 except ListenerProfile.DoesNotExist:
                     return Response(
                         {'error': f'Listener with ID {listener_id} not found'},
