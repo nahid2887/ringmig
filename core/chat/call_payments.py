@@ -95,6 +95,7 @@ def create_call_package_payment_intent(call_package, payment_method_id=None):
             payment_intent_data['confirm'] = True
         
         payment_intent = stripe.PaymentIntent.create(**payment_intent_data)
+        #
         
         # Create Checkout Session for payment link
         checkout_session = stripe.checkout.Session.create(
@@ -112,8 +113,8 @@ def create_call_package_payment_intent(call_package, payment_method_id=None):
                 'quantity': 1,
             }],
             mode='payment',
-            # success_url='https://www.ring-mig.com/dashboard/talker/payment-success-start-call',
-            success_url='http://localhost:5174/dashboard/talker/payment-success-start-call',
+            success_url='https://www.ring-mig.com/dashboard/talker/payment-success-start-call',
+            #success_url='http://localhost:5174/dashboard/talker/payment-success-start-call',
             cancel_url='https://www.ring-mig.com/payment-cancelled',
             metadata={
                 'type': 'call_package',
