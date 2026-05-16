@@ -6,6 +6,7 @@ from django.utils import timezone
 from django.contrib.auth import get_user_model
 from decimal import Decimal
 from datetime import timedelta
+from django.conf import settings
 
 from .call_models import CallSession, CallPackage
 
@@ -277,7 +278,8 @@ class CallConsumer(AsyncWebsocketConsumer):
         await self.update_session_status('timeout')
         await self.consume_booking_after_call()
         
-        # Notify all participants in call WebSocket
+        # Notify all participants in call WebSocket (include participant info)
+        participants = await self.get_participant_info()
         await self.channel_layer.group_send(
             self.room_group_name,
             {
@@ -285,7 +287,8 @@ class CallConsumer(AsyncWebsocketConsumer):
                 'data': {
                     'type': 'call_ending',
                     'message': 'Call time has expired',
-                    'reason': 'timeout'
+                    'reason': 'timeout',
+                    **participants
                 }
             }
         )
@@ -369,27 +372,28 @@ class CallConsumer(AsyncWebsocketConsumer):
         package_name = package_info.get('name') if package_info else 'standard'
         package_duration = package_info.get('duration_minutes') if package_info else total
         
-        # Notify all participants that call is now active
+        # Attach participant info and notify all participants that call is now active
+        participants = await self.get_participant_info()
+        payload = {
+            'type': 'call_accepted',
+            'message': '✅ Call accepted - timer started',
+            'status': 'active',
+            'status_display': '✅ Call Active',
+            'remaining_minutes': round(remaining, 2) if remaining is not None else total,
+            'total_minutes': total or 0,
+            'package_type': package_type,
+            'package_name': package_name,
+            'package_duration': package_duration,
+            'started_at': started_at.isoformat() if started_at else timezone.now().isoformat(),
+            'session_id': str(self.session_id),
+            'accepted': True,
+            'timer_running': True,
+        }
+        payload.update(participants)
+
         await self.channel_layer.group_send(
             self.room_group_name,
-            {
-                'type': 'call_event',
-                'data': {
-                    'type': 'call_accepted',
-                    'message': '✅ Call accepted - timer started',
-                    'status': 'active',
-                    'status_display': '✅ Call Active',
-                    'remaining_minutes': round(remaining, 2) if remaining is not None else total,
-                    'total_minutes': total or 0,
-                    'package_type': package_type,
-                    'package_name': package_name,
-                    'package_duration': package_duration,
-                    'started_at': started_at.isoformat() if started_at else timezone.now().isoformat(),
-                    'session_id': str(self.session_id),
-                    'accepted': True,
-                    'timer_running': True
-                }
-            }
+            {'type': 'call_event', 'data': payload}
         )
     
     async def send_call_status(self):
@@ -430,7 +434,8 @@ class CallConsumer(AsyncWebsocketConsumer):
             time_display = round(remaining, 2) if remaining is not None else 0
             timer_running = False
         
-        await self.send(text_data=json.dumps({
+        participants = await self.get_participant_info()
+        data = {
             'type': 'call_status',
             'message': message,
             'status': status or 'connecting',
@@ -445,7 +450,10 @@ class CallConsumer(AsyncWebsocketConsumer):
             'accepted': call_accepted,
             'timer_running': timer_running,
             'waiting_for_accept': not call_accepted
-        }))
+        }
+        data.update(participants)
+
+        await self.send(text_data=json.dumps(data))
     
     # Database operations (must be wrapped with database_sync_to_async)
     
@@ -523,6 +531,49 @@ class CallConsumer(AsyncWebsocketConsumer):
     def get_started_at(self):
         """Get call start time."""
         return self.call_session.started_at
+
+    @database_sync_to_async
+    def get_participant_info(self):
+        """Return dict with talker/listener display names and absolute profile image URLs."""
+        info = {
+            'talker_name': None,
+            'listener_name': None,
+            'talker_profile_image_url': None,
+            'listener_profile_image_url': None,
+        }
+
+        if not self.call_session:
+            return info
+
+        # Talker info
+        talker_user = self.call_session.talker
+        talker_profile = getattr(talker_user, 'talker_profile', None)
+        if talker_profile:
+            info['talker_name'] = talker_profile.get_full_name() or talker_user.get_full_name()
+            if getattr(talker_profile, 'profile_image', None):
+                url = talker_profile.profile_image.url
+                if url and not url.startswith('http'):
+                    info['talker_profile_image_url'] = getattr(settings, 'BACKEND_URL', 'http://localhost:8000') + url
+                else:
+                    info['talker_profile_image_url'] = url
+        else:
+            info['talker_name'] = talker_user.get_full_name()
+
+        # Listener info
+        listener_user = self.call_session.listener
+        listener_profile = getattr(listener_user, 'listener_profile', None)
+        if listener_profile:
+            info['listener_name'] = listener_profile.get_full_name() or listener_user.get_full_name()
+            if getattr(listener_profile, 'profile_image', None):
+                url = listener_profile.profile_image.url
+                if url and not url.startswith('http'):
+                    info['listener_profile_image_url'] = getattr(settings, 'BACKEND_URL', 'http://localhost:8000') + url
+                else:
+                    info['listener_profile_image_url'] = url
+        else:
+            info['listener_name'] = listener_user.get_full_name()
+
+        return info
     
     @database_sync_to_async
     def should_send_warning(self):
