@@ -591,6 +591,8 @@ class NotificationConsumer(AsyncWebsocketConsumer):
     async def conversation_request(self, event):
         """Send conversation request notification to listener."""
         talker_image = event.get('talker_image')
+        # Ensure absolute URL for image
+        talker_image = self._get_absolute_media_url(talker_image)
         await self._save_notification(
             notification_type='pending_conversation',
             title='New Conversation Request',
@@ -618,6 +620,8 @@ class NotificationConsumer(AsyncWebsocketConsumer):
     async def conversation_accepted(self, event):
         """Send conversation accepted notification to talker."""
         listener_image = event.get('listener_image')
+        # Ensure absolute URL for image
+        listener_image = self._get_absolute_media_url(listener_image)
         await self._save_notification(
             notification_type='general',
             title='Conversation Accepted',
@@ -644,6 +648,8 @@ class NotificationConsumer(AsyncWebsocketConsumer):
     async def conversation_rejected(self, event):
         """Send conversation rejected notification to talker."""
         listener_image = event.get('listener_image')
+        # Ensure absolute URL for image
+        listener_image = self._get_absolute_media_url(listener_image)
         await self._save_notification(
             notification_type='general',
             title='Conversation Rejected',
@@ -671,6 +677,9 @@ class NotificationConsumer(AsyncWebsocketConsumer):
         """Send incoming call notification to listener."""
         talker_image = event.get('talker_image')
         listener_image = event.get('listener_image')
+        # Ensure absolute URLs for images (fallback if producer sent relative paths)
+        talker_image = self._get_absolute_media_url(talker_image)
+        listener_image = self._get_absolute_media_url(listener_image)
         await self._save_notification(
             notification_type='call_started',
             title='Incoming Call',
@@ -711,6 +720,8 @@ class NotificationConsumer(AsyncWebsocketConsumer):
     async def call_ended_notification(self, event):
         """Send call ended notification to user."""
         ended_by_image = event.get('ended_by_image')
+        # Ensure absolute URL
+        ended_by_image = self._get_absolute_media_url(ended_by_image)
         await self._save_notification(
             notification_type='call_ended',
             title='Call Ended',
