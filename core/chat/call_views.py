@@ -1389,6 +1389,18 @@ class CallSessionViewSet(viewsets.ReadOnlyModelViewSet):
         
         try:
             call_session = CallSession.objects.get(id=call_session_id)
+            talker_user = call_session.talker
+            listener_user = call_session.listener
+            talker_profile = getattr(talker_user, 'talker_profile', None)
+            listener_profile = getattr(listener_user, 'listener_profile', None)
+            talker_name = talker_profile.get_full_name() if talker_profile else talker_user.get_full_name()
+            listener_name = listener_profile.get_full_name() if listener_profile else listener_user.get_full_name()
+            talker_image = None
+            listener_image = None
+            if talker_profile and getattr(talker_profile, 'profile_image', None):
+                talker_image = build_absolute_media_url(request, talker_profile.profile_image.url)
+            if listener_profile and getattr(listener_profile, 'profile_image', None):
+                listener_image = build_absolute_media_url(request, listener_profile.profile_image.url)
             
             # Verify listener is accepting their own call
             if call_session.listener != request.user:
@@ -1441,13 +1453,29 @@ class CallSessionViewSet(viewsets.ReadOnlyModelViewSet):
             )
             
             # Notify talker via WebSocket that listener has accepted
-            self.send_call_accepted_notification(call_session_id, call_session)
+            self.send_call_accepted_notification(request, call_session_id, call_session)
             
             logger.info(f"Listener {request.user.id} accepted call session {call_session_id}")
             
             return Response({
                 'message': 'Call accepted successfully. Timer started.',
                 'accepted': True,
+                'talker_name': talker_name,
+                'listener_name': listener_name,
+                'talker_profile_image_url': talker_image,
+                'listener_profile_image_url': listener_image,
+                'talker': {
+                    'id': talker_user.id,
+                    'email': talker_user.email,
+                    'full_name': talker_name,
+                    'profile_image_url': talker_image,
+                },
+                'listener': {
+                    'id': listener_user.id,
+                    'email': listener_user.email,
+                    'full_name': listener_name,
+                    'profile_image_url': listener_image,
+                },
                 'session': CallSessionSerializer(call_session).data,
                 'zim': {
                     'app_id': zim_tokens['app_id'],
@@ -1483,7 +1511,7 @@ class CallSessionViewSet(viewsets.ReadOnlyModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
-    def send_call_accepted_notification(self, session_id, call_session):
+    def send_call_accepted_notification(self, request, session_id, call_session):
         """Send notification to talker via call WebSocket that listener has accepted."""
         try:
             from channels.layers import get_channel_layer
@@ -1496,6 +1524,15 @@ class CallSessionViewSet(viewsets.ReadOnlyModelViewSet):
                 return
             
             group_name = f'call_{session_id}'
+
+            talker_profile = getattr(call_session.talker, 'talker_profile', None)
+            listener_profile = getattr(call_session.listener, 'listener_profile', None)
+            talker_image = None
+            listener_image = None
+            if talker_profile and getattr(talker_profile, 'profile_image', None):
+                talker_image = build_absolute_media_url(request, talker_profile.profile_image.url)
+            if listener_profile and getattr(listener_profile, 'profile_image', None):
+                listener_image = build_absolute_media_url(request, listener_profile.profile_image.url)
             
             # Send call_accepted event to notify talker
             async_to_sync(channel_layer.group_send)(
@@ -1507,6 +1544,10 @@ class CallSessionViewSet(viewsets.ReadOnlyModelViewSet):
                         'message': f'{call_session.listener.full_name or call_session.listener.email} has accepted the call',
                         'listener_id': call_session.listener.id,
                         'listener_name': call_session.listener.full_name or call_session.listener.email,
+                        'listener_profile_image_url': listener_image,
+                        'talker_id': call_session.talker.id,
+                        'talker_name': call_session.talker.full_name or call_session.talker.email,
+                        'talker_profile_image_url': talker_image,
                         'session_id': str(session_id),
                         'timestamp': timezone.now().isoformat(),
                         'status': 'active',
