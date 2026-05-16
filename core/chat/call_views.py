@@ -41,6 +41,32 @@ logger = logging.getLogger(__name__)
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
 
+def build_absolute_media_url(request, url_path):
+    """Return absolute HTTPS media URL for a given media path or full URL."""
+    if not url_path:
+        return None
+    if url_path.startswith('http'):
+        return url_path
+
+    configured = getattr(settings, 'BACKEND_URL', '').strip().rstrip('/')
+    if configured:
+        # prefer configured backend URL
+        return f"{configured}{url_path}"
+
+    host = request.get_host()
+    forwarded = request.META.get('HTTP_X_FORWARDED_PROTO', '')
+    proto = forwarded.split(',')[0].strip().lower() if forwarded else ''
+    is_local = host.startswith('localhost') or host.startswith('127.0.0.1') or host.startswith('0.0.0.0')
+    if proto == 'https' or (request.is_secure() and not is_local):
+        scheme = 'https'
+    elif is_local:
+        scheme = 'http'
+    else:
+        scheme = 'https'
+
+    return f"{scheme}://{host}{url_path}"
+
+
 class UniversalCallPackageViewSet(viewsets.ReadOnlyModelViewSet):
     """ViewSet for viewing universal call packages (admin-created)."""
     
@@ -631,6 +657,22 @@ class CallPackageViewSet(viewsets.ModelViewSet):
                 ws_path = f'/ws/call/{session.id}/'
                 ws_full_url = f'{ws_scheme}://{request.get_host()}{ws_path}?token='
                 
+                # Build participant display info
+                talker_user = call_package.talker
+                listener_user = call_package.listener
+                talker_profile = getattr(talker_user, 'talker_profile', None)
+                listener_profile = getattr(listener_user, 'listener_profile', None)
+
+                talker_name = (talker_profile.get_full_name() if talker_profile else talker_user.get_full_name())
+                listener_name = (listener_profile.get_full_name() if listener_profile else listener_user.get_full_name())
+
+                talker_image = None
+                listener_image = None
+                if talker_profile and getattr(talker_profile, 'profile_image', None):
+                    talker_image = build_absolute_media_url(request, talker_profile.profile_image.url)
+                if listener_profile and getattr(listener_profile, 'profile_image', None):
+                    listener_image = build_absolute_media_url(request, listener_profile.profile_image.url)
+
                 return Response({
                     'message': 'Call session created. Connect to WebSocket to start call.',
                     'session': CallSessionSerializer(session).data,
@@ -652,7 +694,11 @@ class CallPackageViewSet(viewsets.ModelViewSet):
                     'websocket_url': ws_path,
                     'websocket_full_url': ws_full_url,
                     'call_package_id': call_package.id,
-                    'duration_minutes': call_package.package.duration_minutes
+                    'duration_minutes': call_package.package.duration_minutes,
+                    'talker_name': talker_name,
+                    'listener_name': listener_name,
+                    'talker_profile_image_url': talker_image,
+                    'listener_profile_image_url': listener_image
                 }, status=status.HTTP_201_CREATED)
                 
         except Exception as e:
@@ -982,6 +1028,22 @@ class CallSessionViewSet(viewsets.ReadOnlyModelViewSet):
                 user_token = None
                 user_uid = None
                 
+                # Build participant display info
+                talker_user = session.talker
+                listener_user = session.listener
+                talker_profile = getattr(talker_user, 'talker_profile', None)
+                listener_profile = getattr(listener_user, 'listener_profile', None)
+
+                talker_name = (talker_profile.get_full_name() if talker_profile else talker_user.get_full_name())
+                listener_name = (listener_profile.get_full_name() if listener_profile else listener_user.get_full_name())
+
+                talker_image = None
+                listener_image = None
+                if talker_profile and getattr(talker_profile, 'profile_image', None):
+                    talker_image = build_absolute_media_url(request, talker_profile.profile_image.url)
+                if listener_profile and getattr(listener_profile, 'profile_image', None):
+                    listener_image = build_absolute_media_url(request, listener_profile.profile_image.url)
+
                 return Response({
                     'message': 'Call session created. Connect to WebSocket to start call.',
                     'session': {
@@ -1030,7 +1092,11 @@ class CallSessionViewSet(viewsets.ReadOnlyModelViewSet):
                     'websocket_url': ws_path,
                     'websocket_full_url': ws_full_url,
                     'call_package_id': call_package.id,
-                    'duration_minutes': call_package.package.duration_minutes
+                    'duration_minutes': call_package.package.duration_minutes,
+                    'talker_name': talker_name,
+                    'listener_name': listener_name,
+                    'talker_profile_image_url': talker_image,
+                    'listener_profile_image_url': listener_image
                 }, status=status.HTTP_201_CREATED)
                 
         except Exception as e:
