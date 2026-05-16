@@ -7,6 +7,7 @@ from channels.db import database_sync_to_async
 from django.db.models import Q
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import AnonymousUser
+from django.conf import settings
 from django.utils import timezone
 from rest_framework_simplejwt.tokens import AccessToken
 from .models import ListenerAvailability, SessionBooking
@@ -974,6 +975,33 @@ class UserBookingListConsumer(AsyncWebsocketConsumer):
     Route: ws://localhost:8005/ws/bookings/my-bookings/?token=<jwt>
     """
 
+    def _get_absolute_media_url(self, url_path):
+        """Return absolute media URL for websocket payloads."""
+        if not url_path:
+            return None
+        if url_path.startswith('http'):
+            return url_path
+
+        configured = getattr(settings, 'BACKEND_URL', '').strip().rstrip('/')
+        if configured:
+            return f"{configured}{url_path}"
+
+        host = ''
+        forwarded_proto = ''
+        for header_name, header_value in self.scope.get('headers', []):
+            if header_name == b'host':
+                host = header_value.decode('utf-8').strip()
+            elif header_name == b'x-forwarded-proto':
+                forwarded_proto = header_value.decode('utf-8').split(',')[0].strip().lower()
+
+        if not host:
+            host = 'localhost:8000'
+
+        is_local = host.startswith('localhost') or host.startswith('127.0.0.1')
+        scheme = 'https' if forwarded_proto == 'https' or not is_local else 'http'
+
+        return f"{scheme}://{host}{url_path}"
+
     async def connect(self):
         self.user = None
         self.start_tasks = []
@@ -1366,6 +1394,15 @@ class UserBookingListConsumer(AsyncWebsocketConsumer):
         seconds_left = (booking.start_datetime_aware - now).total_seconds()
         minutes_left_to_start = max(0, int(math.ceil(seconds_left / 60)))
 
+        talker_profile = getattr(booking.talker, 'talker_profile', None)
+        listener_profile = getattr(booking.listener, 'listener_profile', None)
+        talker_image = None
+        listener_image = None
+        if talker_profile and getattr(talker_profile, 'profile_image', None):
+            talker_image = self._get_absolute_media_url(talker_profile.profile_image.url)
+        if listener_profile and getattr(listener_profile, 'profile_image', None):
+            listener_image = self._get_absolute_media_url(listener_profile.profile_image.url)
+
         return {
             'id': str(booking.id),
             'role_in_booking': role_in_booking,
@@ -1380,11 +1417,13 @@ class UserBookingListConsumer(AsyncWebsocketConsumer):
                 'id': booking.talker_id,
                 'email': booking.talker.email,
                 'full_name': booking.talker.full_name,
+                'profile_image_url': talker_image,
             },
             'listener': {
                 'id': booking.listener_id,
                 'email': booking.listener.email,
                 'full_name': booking.listener.full_name,
+                'profile_image_url': listener_image,
             },
             'package': {
                 'id': booking.package_id,
