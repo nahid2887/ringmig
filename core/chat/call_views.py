@@ -1010,7 +1010,7 @@ class CallSessionViewSet(viewsets.ReadOnlyModelViewSet):
                 # call_package.start_call() will be called by CallConsumer.start_call()
                 
                 # Send incoming call notification to listener via Channel Layer
-                self.send_incoming_call_notification(session, call_package)
+                self.send_incoming_call_notification(request, session, call_package)
                 
                 # Generate ZIM tokens for both participants
                 from .zim_utils import generate_zim_tokens_for_call
@@ -1690,23 +1690,33 @@ class CallSessionViewSet(viewsets.ReadOnlyModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
-    def send_incoming_call_notification(self, session, call_package):
+    def send_incoming_call_notification(self, request, session, call_package):
         """Send incoming call notification to listener via Channel Layer."""
         from channels.layers import get_channel_layer
         from asgiref.sync import async_to_sync
         from talker.models import TalkerProfile
+        from listener.models import ListenerProfile
         
         try:
             channel_layer = get_channel_layer()
             notification_group = f'user_{session.listener.id}_notifications'
             
-            # Get talker's profile image URL
+            # Get talker's profile image URL using absolute HTTPS URL
             talker_image_url = None
             try:
                 talker_profile = TalkerProfile.objects.get(user=session.talker)
                 if talker_profile.profile_image:
-                    talker_image_url = f'http://10.10.13.27:8005{talker_profile.profile_image.url}'
+                    talker_image_url = build_absolute_media_url(request, talker_profile.profile_image.url)
             except TalkerProfile.DoesNotExist:
+                pass
+            
+            # Get listener's profile image URL using absolute HTTPS URL
+            listener_image_url = None
+            try:
+                listener_profile = ListenerProfile.objects.get(user=session.listener)
+                if listener_profile.profile_image:
+                    listener_image_url = build_absolute_media_url(request, listener_profile.profile_image.url)
+            except ListenerProfile.DoesNotExist:
                 pass
             
             # Send notification via Channel Layer
@@ -1720,6 +1730,10 @@ class CallSessionViewSet(viewsets.ReadOnlyModelViewSet):
                     'talker_email': session.talker.email,
                     'talker_name': session.talker.get_full_name(),
                     'talker_image': talker_image_url,
+                    'listener_id': session.listener.id,
+                    'listener_email': session.listener.email,
+                    'listener_name': session.listener.get_full_name(),
+                    'listener_image': listener_image_url,
                     'call_type': call_package.package.package_type,
                     'total_minutes': call_package.package.duration_minutes,
                     'created_at': session.created_at.isoformat(),

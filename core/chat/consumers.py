@@ -670,6 +670,7 @@ class NotificationConsumer(AsyncWebsocketConsumer):
     async def incoming_call(self, event):
         """Send incoming call notification to listener."""
         talker_image = event.get('talker_image')
+        listener_image = event.get('listener_image')
         await self._save_notification(
             notification_type='call_started',
             title='Incoming Call',
@@ -681,6 +682,8 @@ class NotificationConsumer(AsyncWebsocketConsumer):
                 'total_minutes': event['total_minutes'],
                 'talker_name': event['talker_name'],
                 'talker_image': talker_image,
+                'listener_name': event['listener_name'],
+                'listener_image': listener_image,
             },
         )
         await self.send(text_data=json.dumps({
@@ -693,6 +696,12 @@ class NotificationConsumer(AsyncWebsocketConsumer):
                 'email': event['talker_email'],
                 'full_name': event['talker_name'],
                 'profile_image_url': talker_image
+            },
+            'listener': {
+                'id': event['listener_id'],
+                'email': event['listener_email'],
+                'full_name': event['listener_name'],
+                'profile_image_url': listener_image
             },
             'call_type': event['call_type'],
             'total_minutes': event['total_minutes'],
