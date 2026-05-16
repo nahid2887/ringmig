@@ -36,6 +36,25 @@ class CallConsumer(AsyncWebsocketConsumer):
         self.room_group_name = None
         self.time_check_task = None
         self.last_status = None  # Track last known status
+
+    def get_backend_base_url(self):
+        """Return the public backend base URL for absolute links."""
+        configured_url = getattr(settings, 'BACKEND_URL', '').strip()
+        if configured_url:
+            return configured_url.rstrip('/')
+
+        host = ''
+        for header_name, header_value in self.scope.get('headers', []):
+            if header_name == b'host':
+                host = header_value.decode('utf-8').strip()
+                break
+
+        if not host:
+            server = self.scope.get('server') or ('localhost', 8000)
+            host = f'{server[0]}:{server[1]}' if server[1] else server[0]
+
+        scheme = 'https' if self.scope.get('scheme') in ['wss', 'https'] else 'http'
+        return f'{scheme}://{host}'.rstrip('/')
     
     async def connect(self):
         """Handle WebSocket connection."""
@@ -553,7 +572,7 @@ class CallConsumer(AsyncWebsocketConsumer):
             if getattr(talker_profile, 'profile_image', None):
                 url = talker_profile.profile_image.url
                 if url and not url.startswith('http'):
-                    info['talker_profile_image_url'] = getattr(settings, 'BACKEND_URL', 'http://localhost:8000') + url
+                    info['talker_profile_image_url'] = f"{self.get_backend_base_url()}{url}"
                 else:
                     info['talker_profile_image_url'] = url
         else:
@@ -567,7 +586,7 @@ class CallConsumer(AsyncWebsocketConsumer):
             if getattr(listener_profile, 'profile_image', None):
                 url = listener_profile.profile_image.url
                 if url and not url.startswith('http'):
-                    info['listener_profile_image_url'] = getattr(settings, 'BACKEND_URL', 'http://localhost:8000') + url
+                    info['listener_profile_image_url'] = f"{self.get_backend_base_url()}{url}"
                 else:
                     info['listener_profile_image_url'] = url
         else:
