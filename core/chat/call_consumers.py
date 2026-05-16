@@ -53,7 +53,20 @@ class CallConsumer(AsyncWebsocketConsumer):
             server = self.scope.get('server') or ('localhost', 8000)
             host = f'{server[0]}:{server[1]}' if server[1] else server[0]
 
-        scheme = 'https' if self.scope.get('scheme') in ['wss', 'https'] else 'http'
+        forwarded_proto = ''
+        for header_name, header_value in self.scope.get('headers', []):
+            if header_name == b'x-forwarded-proto':
+                forwarded_proto = header_value.decode('utf-8').split(',')[0].strip().lower()
+                break
+
+        is_local_host = host.startswith('localhost') or host.startswith('127.0.0.1') or host.startswith('0.0.0.0')
+        if forwarded_proto in ['https', 'wss']:
+            scheme = 'https'
+        elif is_local_host:
+            scheme = 'http'
+        else:
+            scheme = 'https'
+
         return f'{scheme}://{host}'.rstrip('/')
     
     async def connect(self):
