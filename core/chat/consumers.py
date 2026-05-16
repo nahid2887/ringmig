@@ -8,6 +8,7 @@ from django.db.models import Q
 from django.contrib.auth import get_user_model
 from django.core.files.base import ContentFile
 from django.utils import timezone
+from django.conf import settings
 from rest_framework_simplejwt.tokens import AccessToken
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from .models import Conversation, Message, FileAttachment, Notification
@@ -500,6 +501,31 @@ class NotificationConsumer(AsyncWebsocketConsumer):
 
     BOOKING_REMINDER_CHECK_INTERVAL_SECONDS = 30
     
+    def _get_absolute_media_url(self, url_path):
+        """Return absolute HTTPS media URL for a given media path."""
+        if not url_path:
+            return None
+        if url_path.startswith('http'):
+            return url_path
+        
+        configured = getattr(settings, 'BACKEND_URL', '').strip().rstrip('/')
+        if configured:
+            return f"{configured}{url_path}"
+        
+        host = ''
+        for header_name, header_value in self.scope.get('headers', []):
+            if header_name == b'host':
+                host = header_value.decode('utf-8').strip()
+                break
+        
+        if not host:
+            host = 'localhost:8000'
+        
+        is_local = host.startswith('localhost') or host.startswith('127.0.0.1')
+        scheme = 'http' if is_local else 'https'
+        
+        return f"{scheme}://{host}{url_path}"
+    
     async def connect(self):
         """Handle WebSocket connection for notifications."""
         self.booking_reminder_task = None
@@ -564,6 +590,7 @@ class NotificationConsumer(AsyncWebsocketConsumer):
     
     async def conversation_request(self, event):
         """Send conversation request notification to listener."""
+        talker_image = event.get('talker_image')
         await self._save_notification(
             notification_type='pending_conversation',
             title='New Conversation Request',
@@ -573,6 +600,7 @@ class NotificationConsumer(AsyncWebsocketConsumer):
                 'talker_id': event['talker_id'],
                 'talker_email': event['talker_email'],
                 'talker_name': event['talker_name'],
+                'talker_image': talker_image,
             },
         )
         await self.send(text_data=json.dumps({
@@ -581,6 +609,7 @@ class NotificationConsumer(AsyncWebsocketConsumer):
             'talker_id': event['talker_id'],
             'talker_email': event['talker_email'],
             'talker_name': event['talker_name'],
+            'talker_profile_image_url': talker_image,
             'initial_message': event['initial_message'],
             'created_at': event['created_at'],
             'message': f"New conversation request from {event['talker_name']}"
@@ -588,6 +617,7 @@ class NotificationConsumer(AsyncWebsocketConsumer):
     
     async def conversation_accepted(self, event):
         """Send conversation accepted notification to talker."""
+        listener_image = event.get('listener_image')
         await self._save_notification(
             notification_type='general',
             title='Conversation Accepted',
@@ -597,6 +627,7 @@ class NotificationConsumer(AsyncWebsocketConsumer):
                 'listener_id': event['listener_id'],
                 'listener_email': event['listener_email'],
                 'listener_name': event['listener_name'],
+                'listener_image': listener_image,
             },
         )
         await self.send(text_data=json.dumps({
@@ -605,12 +636,14 @@ class NotificationConsumer(AsyncWebsocketConsumer):
             'listener_id': event['listener_id'],
             'listener_email': event['listener_email'],
             'listener_name': event['listener_name'],
+            'listener_profile_image_url': listener_image,
             'accepted_at': event['accepted_at'],
             'message': f"Your conversation request was accepted by {event['listener_name']}"
         }))
     
     async def conversation_rejected(self, event):
         """Send conversation rejected notification to talker."""
+        listener_image = event.get('listener_image')
         await self._save_notification(
             notification_type='general',
             title='Conversation Rejected',
@@ -620,6 +653,7 @@ class NotificationConsumer(AsyncWebsocketConsumer):
                 'listener_id': event['listener_id'],
                 'listener_email': event['listener_email'],
                 'listener_name': event['listener_name'],
+                'listener_image': listener_image,
             },
         )
         await self.send(text_data=json.dumps({
@@ -628,12 +662,14 @@ class NotificationConsumer(AsyncWebsocketConsumer):
             'listener_id': event['listener_id'],
             'listener_email': event['listener_email'],
             'listener_name': event['listener_name'],
+            'listener_profile_image_url': listener_image,
             'rejected_at': event['rejected_at'],
             'message': f"Your conversation request was rejected by {event['listener_name']}"
         }))
     
     async def incoming_call(self, event):
         """Send incoming call notification to listener."""
+        talker_image = event.get('talker_image')
         await self._save_notification(
             notification_type='call_started',
             title='Incoming Call',
@@ -643,6 +679,8 @@ class NotificationConsumer(AsyncWebsocketConsumer):
                 'call_package_id': event['call_package_id'],
                 'call_type': event['call_type'],
                 'total_minutes': event['total_minutes'],
+                'talker_name': event['talker_name'],
+                'talker_image': talker_image,
             },
         )
         await self.send(text_data=json.dumps({
@@ -654,7 +692,7 @@ class NotificationConsumer(AsyncWebsocketConsumer):
                 'id': event['talker_id'],
                 'email': event['talker_email'],
                 'full_name': event['talker_name'],
-                'profile_image': event.get('talker_image')
+                'profile_image_url': talker_image
             },
             'call_type': event['call_type'],
             'total_minutes': event['total_minutes'],
@@ -663,6 +701,7 @@ class NotificationConsumer(AsyncWebsocketConsumer):
 
     async def call_ended_notification(self, event):
         """Send call ended notification to user."""
+        ended_by_image = event.get('ended_by_image')
         await self._save_notification(
             notification_type='call_ended',
             title='Call Ended',
@@ -672,6 +711,7 @@ class NotificationConsumer(AsyncWebsocketConsumer):
                 'duration_minutes': event['duration_minutes'],
                 'ended_by': event['ended_by'],
                 'ended_by_name': event.get('ended_by_name'),
+                'ended_by_image': ended_by_image,
             },
         )
         await self.send(text_data=json.dumps({
@@ -681,6 +721,7 @@ class NotificationConsumer(AsyncWebsocketConsumer):
             'duration_minutes': event['duration_minutes'],
             'ended_by': event['ended_by'],
             'ended_by_name': event.get('ended_by_name'),
+            'ended_by_profile_image_url': ended_by_image,
             'timestamp': event['timestamp']
         }))
     
