@@ -114,6 +114,14 @@ class TalkerProfileViewSet(viewsets.ModelViewSet):
         """Get the talker profile for the authenticated user."""
         return get_object_or_404(TalkerProfile, user=self.request.user)
 
+    def _sync_user_full_name(self, talker_profile):
+        """Keep the auth user full_name aligned with the profile name fields."""
+        combined_name = talker_profile.get_full_name()
+
+        if talker_profile.user.full_name != combined_name:
+            talker_profile.user.full_name = combined_name
+            talker_profile.user.save(update_fields=['full_name', 'updated_at'])
+
     def destroy(self, request, *args, **kwargs):
         """Delete talker profile and deactivate the associated user account.
         
@@ -139,7 +147,7 @@ class TalkerProfileViewSet(viewsets.ModelViewSet):
             status=status.HTTP_204_NO_CONTENT
         )
 
-    @action(detail=False, methods=['get', 'put', 'patch'], permission_classes=[IsTalkerUser], parser_classes=[MultiPartParser, FormParser])
+    @action(detail=False, methods=['get', 'put', 'patch'], permission_classes=[IsTalkerUser], parser_classes=[JSONParser, MultiPartParser, FormParser])
     def my_profile(self, request):
         """Get or update the authenticated talker user's profile."""
         try:
@@ -155,9 +163,42 @@ class TalkerProfileViewSet(viewsets.ModelViewSet):
             return Response(serializer.data)
 
         elif request.method in ['PUT', 'PATCH']:
-            serializer = self.get_serializer(talker_profile, data=request.data, partial=True, context={'request': request})
+            payload = request.data.copy() if hasattr(request.data, 'copy') else dict(request.data)
+            invalid_tokens = {'undefined', 'null', 'none'}
+
+            for key in ['first_name', 'last_name']:
+                if key in payload:
+                    value = str(payload.get(key, '')).strip()
+                    if value.lower() in invalid_tokens:
+                        payload[key] = ''
+
+            full_name_input = str(payload.get('full_name', payload.get('fullname', ''))).strip()
+            if full_name_input.lower() in invalid_tokens:
+                full_name_input = ''
+
+            if full_name_input:
+                parts = full_name_input.split(None, 1)
+                first_name = parts[0]
+                last_name = parts[1] if len(parts) > 1 else ''
+
+                if first_name.lower() in invalid_tokens:
+                    first_name = ''
+                if last_name.lower() in invalid_tokens:
+                    last_name = ''
+
+                if not str(payload.get('first_name', '')).strip():
+                    payload['first_name'] = first_name
+                if not str(payload.get('last_name', '')).strip():
+                    payload['last_name'] = last_name
+
+            payload.pop('full_name', None)
+            payload.pop('fullname', None)
+
+            serializer = self.get_serializer(talker_profile, data=payload, partial=True, context={'request': request})
             if serializer.is_valid():
-                serializer.save()
+                talker_profile = serializer.save()
+                self._sync_user_full_name(talker_profile)
+                talker_profile.refresh_from_db()
                 # Return serializer data with full context
                 response_data = serializer.data
                 # Ensure profile_image_url is included
