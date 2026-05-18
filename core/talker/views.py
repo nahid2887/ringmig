@@ -292,6 +292,13 @@ class TalkerProfileViewSet(viewsets.ModelViewSet):
             'ml': 'malayalam',
         }
         
+        # Determine talker location to also match listeners by location
+        talker_location = ''
+        try:
+            talker_location = (request.user.talker_profile.location or '').strip().lower()
+        except Exception:
+            talker_location = ''
+
         # Filter by language and search in Python
         # This is done in Python to support SQLite (doesn't support JSONField contains lookup)
         filtered_listeners = []
@@ -311,6 +318,15 @@ class TalkerProfileViewSet(viewsets.ModelViewSet):
                     )
                 )
                 if not talker_lang_match:
+                    continue
+            
+            # Also require location match when talker has set a location
+            if talker_location:
+                listener_loc = (listener.location or '').strip().lower()
+                # If listener has no location or locations don't match (substring check), skip
+                if not listener_loc:
+                    continue
+                if talker_location not in listener_loc and listener_loc not in talker_location:
                     continue
             else:
                 # Search mode - do not restrict by talker's language.
