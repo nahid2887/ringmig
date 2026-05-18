@@ -100,7 +100,7 @@ def create_call_package_payment_intent(call_package, payment_method_id=None):
         # Create Checkout Session for payment link
         checkout_session = stripe.checkout.Session.create(
             customer=stripe_customer.stripe_customer_id,
-            payment_method_types=['card'],
+            payment_method_types=['card'],s
             line_items=[{
                 'price_data': {
                     'currency': 'usd',
@@ -113,8 +113,8 @@ def create_call_package_payment_intent(call_package, payment_method_id=None):
                 'quantity': 1,
             }],
             mode='payment',
-            #success_url='https://www.ring-mig.com/dashboard/talker/payment-success-start-call',
-            success_url='http://localhost:5174/dashboard/talker/payment-success-start-call',
+            success_url='https://www.ring-mig.com/dashboard/talker/payment-success-start-call',
+            #success_url='http://localhost:5174/dashboard/talker/payment-success-start-call',
             cancel_url='https://www.ring-mig.com/payment-cancelled',
             metadata={
                 'type': 'call_package',
