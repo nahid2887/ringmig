@@ -53,7 +53,6 @@ class User(AbstractBaseUser, PermissionsMixin):
     phone_number = models.CharField(max_length=20, blank=True)
     birthday = models.DateField(null=True, blank=True)
     language = models.CharField(max_length=10, default='en')
-    country = models.CharField(max_length=100, blank=True, help_text='User selected country during registration')
     admin_status = models.CharField(
         max_length=20,
         choices=ADMIN_STATUS_CHOICES,
@@ -98,6 +97,7 @@ class OTP(models.Model):
         default='talker'
     )
     language = models.CharField(max_length=10, default='en')
+    country = models.CharField(max_length=100, blank=True, help_text='User selected country during registration')
     expires_at = models.DateTimeField()
     created_at = models.DateTimeField(auto_now_add=True)
     
