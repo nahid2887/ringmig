@@ -100,7 +100,7 @@ def create_call_package_payment_intent(call_package, payment_method_id=None):
         # Create Checkout Session for payment link
         checkout_session = stripe.checkout.Session.create(
             customer=stripe_customer.stripe_customer_id,
-            payment_method_types=['card'],s
+            payment_method_types=['card'],
             line_items=[{
                 'price_data': {
                     'currency': 'usd',
