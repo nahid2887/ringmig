@@ -243,7 +243,6 @@ class TalkerProfileViewSet(viewsets.ModelViewSet):
         
         Example with language: /api/talker/profiles/all_listeners/?language=bangla&page=1&page_size=8
         """
-        from django.db.models import Q
         from rest_framework.pagination import PageNumberPagination
         
         # Get list of listener IDs that have blocked this talker
@@ -299,58 +298,48 @@ class TalkerProfileViewSet(viewsets.ModelViewSet):
         except Exception:
             talker_location = ''
 
-        # Filter by language and search in Python
-        # This is done in Python to support SQLite (doesn't support JSONField contains lookup)
+        # Filter by language and/or location in Python
+        # Include listener if: language matches OR location matches (or both).
         filtered_listeners = []
         for listener in listeners:
-            if not listener.languages:
+            # skip if no languages and no location
+            if not (listener.languages or listener.location):
                 continue
 
-            if not has_search:
-                # No search query provided - keep the original behavior and only show listeners
-                # who speak the talker's language.
-                talker_lang_match = (
-                    talker_language in listener.languages or
-                    talker_language in (
-                        language_names.get(lang, '')
-                        for lang in listener.languages
-                        if lang in language_names
-                    )
+            language_match = False
+            name_match = False
+
+            # Compute talker language match (for no-search mode)
+            talker_lang_match = (
+                talker_language in (listener.languages or []) or
+                talker_language in (
+                    language_names.get(lang, '')
+                    for lang in (listener.languages or [])
+                    if lang in language_names
                 )
-                if not talker_lang_match:
-                    continue
-            
-            # Also require location match when talker has set a location
-            if talker_location:
-                listener_loc = (listener.location or '').strip().lower()
-                # If listener has no location or locations don't match (substring check), skip
-                if not listener_loc:
-                    continue
-                if talker_location not in listener_loc and listener_loc not in talker_location:
-                    continue
+            )
+
+            if not has_search:
+                # No search: language match is based on talker's language
+                language_match = talker_lang_match
             else:
-                # Search mode - do not restrict by talker's language.
-                # Search should work across the full listener list.
+                # Search mode
                 if search_language:
                     language_match = (
-                        search_language in listener.languages or
+                        search_language in (listener.languages or []) or
                         search_language in (
                             language_names.get(lang, '')
-                            for lang in listener.languages
+                            for lang in (listener.languages or [])
                             if lang in language_names
                         )
                     )
-                    if not language_match:
-                        continue
-
                 if search_query:
                     name_match = (
                         search_query in (listener.first_name or '').lower() or
                         search_query in (listener.last_name or '').lower()
                     )
-
-                    language_match = False
-                    for lang in listener.languages:
+                    # Check if search query matches any language code or display name
+                    for lang in (listener.languages or []):
                         if search_query in lang.lower():
                             language_match = True
                             break
@@ -358,9 +347,17 @@ class TalkerProfileViewSet(viewsets.ModelViewSet):
                             language_match = True
                             break
 
-                    if not (name_match or language_match):
-                        continue
-            
+            # Determine location match
+            listener_loc = (listener.location or '').strip().lower()
+            location_match = False
+            if talker_location and listener_loc:
+                if talker_location in listener_loc or listener_loc in talker_location:
+                    location_match = True
+
+            # Include listener if language OR location OR name matches
+            if not (language_match or location_match or name_match):
+                continue
+
             filtered_listeners.append(listener)
         
         listeners = filtered_listeners
@@ -442,13 +439,15 @@ class TalkerProfileViewSet(viewsets.ModelViewSet):
             user_id__in=blocked_by
         ).order_by('-average_rating')
         
-        # Apply search filter if provided (search by name first via ORM)
+        # Search query
         search_query = request.query_params.get('search', '').strip().lower()
-        if search_query:
-            listeners = listeners.filter(
-                Q(first_name__icontains=search_query) |
-                Q(last_name__icontains=search_query)
-            )
+
+        # Determine talker location to also match listeners by location
+        talker_location = ''
+        try:
+            talker_location = (request.user.talker_profile.location or '').strip().lower()
+        except Exception:
+            talker_location = ''
         
         # Language code to display name mapping for search matching
         language_names = {
@@ -474,18 +473,32 @@ class TalkerProfileViewSet(viewsets.ModelViewSet):
             'ml': 'malayalam',
         }
         
-        # Filter by language and search in Python
-        # This is done in Python to support SQLite (doesn't support JSONField contains lookup)
+        # Filter by language and/or location in Python
+        # Include listener if: language matches OR location matches (or both).
         filtered_listeners = []
         for listener in listeners:
-            if not listener.languages:
+            if not (listener.languages or listener.location):
                 continue
             
-            # Must speak the talker's language (check both code and name)
-            talker_lang_match = (talker_language in listener.languages or 
-                                talker_language in (language_names.get(lang, '') for lang in listener.languages if lang in language_names))
-            
-            if not talker_lang_match:
+            # Language match against talker's language
+            talker_lang_match = (
+                talker_language in (listener.languages or []) or
+                talker_language in (
+                    language_names.get(lang, '')
+                    for lang in (listener.languages or [])
+                    if lang in language_names
+                )
+            )
+
+            # Location match against talker's location
+            listener_loc = (listener.location or '').strip().lower()
+            location_match = False
+            if talker_location and listener_loc:
+                if talker_location in listener_loc or listener_loc in talker_location:
+                    location_match = True
+
+            # Must match by language or location
+            if not (talker_lang_match or location_match):
                 continue
             
             # If search query provided, check if it matches name OR language
