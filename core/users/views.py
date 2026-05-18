@@ -29,6 +29,7 @@ from .serializers import (
     ChangePasswordAfterResetSerializer
 )
 from .models import OTP, CalUserMapping, PasswordResetOTP
+from .serializers import COUNTRY_CHOICES
 
 
 User = get_user_model()
@@ -135,7 +136,8 @@ class OTPRequestView(APIView):
                 full_name=serializer.validated_data['full_name'],
                 password=serializer.validated_data['password'],
                 user_type=serializer.validated_data.get('user_type', 'talker'),
-                language=serializer.validated_data.get('language', 'en')
+                language=serializer.validated_data.get('language', 'en'),
+                country=serializer.validated_data.get('country', '')
             )
             
             # Send OTP via email
@@ -191,6 +193,23 @@ class OTPVerificationView(APIView):
                     is_verified=True,
                     is_active=True
                 )
+
+                # If the OTP carried a country selection, persist it to the newly-created
+                # listener/talker profile 'location' field so it appears in my_profile.
+                try:
+                    country = (otp_obj.country or '').strip()
+                    if country:
+                        if user.user_type == 'listener' and hasattr(user, 'listener_profile'):
+                            lp = user.listener_profile
+                            lp.location = country
+                            lp.save(update_fields=['location'])
+                        elif user.user_type == 'talker' and hasattr(user, 'talker_profile'):
+                            tp = user.talker_profile
+                            tp.location = country
+                            tp.save(update_fields=['location'])
+                except Exception:
+                    # non-fatal: continue registration even if setting location fails
+                    pass
                 
                 # Mark OTP as verified and optionally delete it
                 otp_obj.is_verified = True
@@ -234,6 +253,10 @@ class UserRegistrationView(APIView):
     def post(self, request, *args, **kwargs):
         serializer = OTPRequestSerializer(data=request.data)
         if serializer.is_valid():
+            # Normalize country value to choice code if provided
+            country = serializer.validated_data.get('country', '') if 'country' in serializer.validated_data else ''
+            if country and country not in dict(COUNTRY_CHOICES):
+                return Response({'country': 'Invalid country selection.'}, status=status.HTTP_400_BAD_REQUEST)
             email = serializer.validated_data['email']
             
             # Generate OTP
@@ -250,7 +273,8 @@ class UserRegistrationView(APIView):
                 full_name=serializer.validated_data['full_name'],
                 password=serializer.validated_data['password'],
                 user_type=serializer.validated_data.get('user_type', 'talker'),
-                language=serializer.validated_data.get('language', 'en')
+                language=serializer.validated_data.get('language', 'en'),
+                country=serializer.validated_data.get('country', '')
             )
             
             # Send OTP via email
@@ -342,6 +366,14 @@ class UserLoginView(APIView):
                 }, status=status.HTTP_200_OK)
             return Response({'error': 'Invalid credentials'}, status=status.HTTP_401_UNAUTHORIZED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class CountryListView(APIView):
+    """Return a list of available countries for registration dropdown."""
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        return Response([{'code': code, 'name': name} for code, name in COUNTRY_CHOICES], status=status.HTTP_200_OK)
 
 
 class UserLogoutView(APIView):
