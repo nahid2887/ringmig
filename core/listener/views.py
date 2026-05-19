@@ -171,6 +171,10 @@ class ListenerProfileViewSet(viewsets.ModelViewSet):
             payload = request.data.copy() if hasattr(request.data, 'copy') else dict(request.data)
             invalid_tokens = {'undefined', 'null', 'none'}
 
+            language_value = str(payload.get('language', '')).strip().lower()
+            if language_value in invalid_tokens:
+                language_value = ''
+
             # Normalize direct first_name/last_name values from frontend placeholders.
             for key in ['first_name', 'last_name']:
                 if key in payload:
@@ -202,11 +206,28 @@ class ListenerProfileViewSet(viewsets.ModelViewSet):
             if 'full_name' in payload:
                 payload.pop('full_name')
 
+            # Language is stored on the User model and mirrored to ListenerProfile.languages.
+            if 'language' in payload:
+                payload.pop('language')
+
             serializer = self.get_serializer(listener_profile, data=payload, partial=True, context={'request': request})
             if serializer.is_valid():
                 serializer.save()
+
+                if language_value:
+                    if request.user.language != language_value:
+                        request.user.language = language_value
+                        request.user.save(update_fields=['language'])
+
+                    existing_languages = list(listener_profile.languages or [])
+                    if language_value not in existing_languages:
+                        existing_languages = [language_value] + existing_languages
+                    listener_profile.languages = existing_languages or [language_value]
+                    listener_profile.save(update_fields=['languages'])
+
                 self._sync_user_full_name(listener_profile)
                 # Refresh to get updated image
+                request.user.refresh_from_db()
                 listener_profile.refresh_from_db()
                 response_data = serializer.data
                 # Ensure profile_image_url is included
