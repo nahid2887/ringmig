@@ -210,6 +210,21 @@ class OTPVerificationView(APIView):
                 except Exception:
                     # non-fatal: continue registration even if setting location fails
                     pass
+
+                # Persist the selected registration language into the listener profile's
+                # languages list so /api/listener/profiles/my_profile/ exposes it.
+                try:
+                    selected_language = (otp_obj.language or 'en').strip()
+                    if user.user_type == 'listener' and hasattr(user, 'listener_profile'):
+                        lp = user.listener_profile
+                        existing_languages = list(lp.languages or [])
+                        if selected_language and selected_language not in existing_languages:
+                            existing_languages = [selected_language] + existing_languages
+                        lp.languages = existing_languages or [selected_language]
+                        lp.save(update_fields=['languages'])
+                except Exception:
+                    # non-fatal: continue registration even if setting languages fails
+                    pass
                 
                 # Mark OTP as verified and optionally delete it
                 otp_obj.is_verified = True
