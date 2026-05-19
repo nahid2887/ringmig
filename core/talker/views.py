@@ -473,35 +473,14 @@ class TalkerProfileViewSet(viewsets.ModelViewSet):
             'ml': 'malayalam',
         }
         
-        # Filter by language and/or location in Python
-        # Include listener if: language matches OR location matches (or both).
+        # Filter by language and/or location in Python.
+        # If search is provided, search across all available listeners.
         filtered_listeners = []
         for listener in listeners:
             if not (listener.languages or listener.location):
                 continue
-            
-            # Language match against talker's language
-            talker_lang_match = (
-                talker_language in (listener.languages or []) or
-                talker_language in (
-                    language_names.get(lang, '')
-                    for lang in (listener.languages or [])
-                    if lang in language_names
-                )
-            )
 
-            # Location match against talker's location
-            listener_loc = (listener.location or '').strip().lower()
-            location_match = False
-            if talker_location and listener_loc:
-                if talker_location in listener_loc or listener_loc in talker_location:
-                    location_match = True
-
-            # Must match by language or location
-            if not (talker_lang_match or location_match):
-                continue
-            
-            # If search query provided, check if it matches name OR language
+            # If search query provided, search across names, languages, and location.
             if search_query:
                 name_match = (search_query in (listener.first_name or '').lower() or 
                              search_query in (listener.last_name or '').lower())
@@ -517,9 +496,30 @@ class TalkerProfileViewSet(viewsets.ModelViewSet):
                     if lang in language_names and search_query in language_names[lang]:
                         language_match = True
                         break
+
+                location_match = search_query in (listener.location or '').strip().lower()
                 
-                # Include listener if search matches name OR language
-                if not (name_match or language_match):
+                # Include listener if search matches name OR language OR location
+                if not (name_match or language_match or location_match):
+                    continue
+            else:
+                # No search: include listener if language matches talker language or location matches talker location.
+                talker_lang_match = (
+                    talker_language in (listener.languages or []) or
+                    talker_language in (
+                        language_names.get(lang, '')
+                        for lang in (listener.languages or [])
+                        if lang in language_names
+                    )
+                )
+
+                listener_loc = (listener.location or '').strip().lower()
+                location_match = False
+                if talker_location and listener_loc:
+                    if talker_location in listener_loc or listener_loc in talker_location:
+                        location_match = True
+
+                if not (talker_lang_match or location_match):
                     continue
             
             filtered_listeners.append(listener)
