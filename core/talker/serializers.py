@@ -234,11 +234,12 @@ class TalkerProfileSerializer(serializers.ModelSerializer):
     """Serializer for talker profile personal information."""
     full_name = serializers.SerializerMethodField()
     user_email = serializers.CharField(source='user.email', read_only=True)
+    language = serializers.CharField(source='user.language', read_only=True)
     profile_image_url = serializers.SerializerMethodField()
 
     class Meta:
         model = TalkerProfile
-        fields = ['id', 'user', 'user_email', 'first_name', 'last_name', 'full_name', 'gender', 
+        fields = ['id', 'user', 'user_email', 'language', 'first_name', 'last_name', 'full_name', 'gender', 
                   'profile_image', 'profile_image_url', 'location', 'about_me', 'created_at', 'updated_at']
         read_only_fields = ['user', 'user_email', 'created_at', 'updated_at', 'id', 'profile_image_url']
         extra_kwargs = {
