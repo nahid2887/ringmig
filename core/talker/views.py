@@ -10,6 +10,7 @@ from django.conf import settings
 from django.db import transaction
 from decimal import Decimal, InvalidOperation
 import stripe
+from users.serializers import COUNTRY_CHOICES
 from .models import TalkerProfile, FavoriteListener
 from .serializers import (TalkerProfileSerializer, FavoriteListenerSerializer, AddFavoriteListenerSerializer,
                           TalkerCallHistorySerializer, TalkerCallHistoryDetailSerializer,
@@ -290,6 +291,32 @@ class TalkerProfileViewSet(viewsets.ModelViewSet):
             'kn': 'kannada',
             'ml': 'malayalam',
         }
+
+        country_names = {
+            code.lower(): name.lower()
+            for code, name in COUNTRY_CHOICES
+            if code
+        }
+
+        def location_matches(left_value, right_value):
+            left_value = (left_value or '').strip().lower()
+            right_value = (right_value or '').strip().lower()
+
+            if not left_value or not right_value:
+                return False
+
+            if left_value == right_value or left_value in right_value or right_value in left_value:
+                return True
+
+            left_name = country_names.get(left_value, '')
+            right_name = country_names.get(right_value, '')
+
+            if left_name and (left_name == right_value or left_name in right_value or right_value in left_name):
+                return True
+            if right_name and (right_name == left_value or right_name in left_value or left_value in right_name):
+                return True
+
+            return False
         
         # Determine talker location to also match listeners by location
         talker_location = ''
@@ -497,7 +524,7 @@ class TalkerProfileViewSet(viewsets.ModelViewSet):
                         language_match = True
                         break
 
-                location_match = search_query in (listener.location or '').strip().lower()
+                location_match = location_matches(search_query, listener.location)
                 
                 # Include listener if search matches name OR language OR location
                 if not (name_match or language_match or location_match):
@@ -513,11 +540,7 @@ class TalkerProfileViewSet(viewsets.ModelViewSet):
                     )
                 )
 
-                listener_loc = (listener.location or '').strip().lower()
-                location_match = False
-                if talker_location and listener_loc:
-                    if talker_location in listener_loc or listener_loc in talker_location:
-                        location_match = True
+                location_match = location_matches(talker_location, listener.location)
 
                 if not (talker_lang_match or location_match):
                     continue
