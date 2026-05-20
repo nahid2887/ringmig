@@ -167,6 +167,11 @@ class TalkerProfileViewSet(viewsets.ModelViewSet):
             payload = request.data.copy() if hasattr(request.data, 'copy') else dict(request.data)
             invalid_tokens = {'undefined', 'null', 'none'}
 
+            # Accept language value from frontend and normalize it for storage on User
+            language_value = str(payload.get('language', '')).strip().lower()
+            if language_value in invalid_tokens:
+                language_value = ''
+
             for key in ['first_name', 'last_name']:
                 if key in payload:
                     value = str(payload.get(key, '')).strip()
@@ -195,13 +200,27 @@ class TalkerProfileViewSet(viewsets.ModelViewSet):
             payload.pop('full_name', None)
             payload.pop('fullname', None)
 
+            # Remove language from payload because it's stored on User, not TalkerProfile
+            if 'language' in payload:
+                payload.pop('language')
+
             serializer = self.get_serializer(talker_profile, data=payload, partial=True, context={'request': request})
             if serializer.is_valid():
                 talker_profile = serializer.save()
+
+                # Persist language to the User model when provided
+                if language_value:
+                    if request.user.language != language_value:
+                        request.user.language = language_value
+                        request.user.save(update_fields=['language'])
+
                 self._sync_user_full_name(talker_profile)
+                # Refresh DB objects to ensure serializer reflects updates
+                request.user.refresh_from_db()
                 talker_profile.refresh_from_db()
-                # Return serializer data with full context
-                response_data = serializer.data
+
+                # Re-serialize to include updated user.language
+                response_data = self.get_serializer(talker_profile, context={'request': request}).data
                 # Ensure profile_image_url is included
                 if talker_profile.profile_image:
                     response_data['profile_image_url'] = request.build_absolute_uri(talker_profile.profile_image.url)
