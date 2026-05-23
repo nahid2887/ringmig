@@ -960,7 +960,7 @@ def _build_base_availability_time(listener, days=7):
 
 
 def _send_booking_completed_notification(booking):
-    """Notify the listener that a booking has been completed."""
+    """Notify both talker and listener that a booking has been completed."""
     channel_layer = get_channel_layer()
     if not channel_layer:
         return
@@ -968,29 +968,41 @@ def _send_booking_completed_notification(booking):
     talker_name = booking.talker.full_name or booking.talker.email
     listener_name = booking.listener.full_name or booking.listener.email
 
+    base_payload = {
+        'type': 'booking_completed_notification',
+        'booking_id': str(booking.id),
+        'session_id': str(booking.id),
+        'booking_date': booking.booking_date.isoformat(),
+        'start_time': booking.start_time.strftime('%H:%M:%S'),
+        'end_time': booking.end_time.strftime('%H:%M:%S'),
+        'duration_minutes': booking.duration_minutes,
+        'talker': {
+            'id': booking.talker_id,
+            'email': booking.talker.email,
+            'full_name': talker_name,
+        },
+        'listener': {
+            'id': booking.listener_id,
+            'email': booking.listener.email,
+            'full_name': listener_name,
+        },
+        'price': str(booking.price),
+        'timestamp': timezone.now().isoformat(),
+    }
+
+    async_to_sync(channel_layer.group_send)(
+        f'user_{booking.talker.id}_notifications',
+        {
+            **base_payload,
+            'message': f'You have booking with {listener_name}',
+        },
+    )
+
     async_to_sync(channel_layer.group_send)(
         f'user_{booking.listener.id}_notifications',
         {
-            'type': 'booking_completed_notification',
-            'booking_id': str(booking.id),
-            'session_id': str(booking.id),
-            'booking_date': booking.booking_date.isoformat(),
-            'start_time': booking.start_time.strftime('%H:%M:%S'),
-            'end_time': booking.end_time.strftime('%H:%M:%S'),
-            'duration_minutes': booking.duration_minutes,
-            'talker': {
-                'id': booking.talker_id,
-                'email': booking.talker.email,
-                'full_name': talker_name,
-            },
-            'listener': {
-                'id': booking.listener_id,
-                'email': booking.listener.email,
-                'full_name': listener_name,
-            },
-            'price': str(booking.price),
-            'message': f'Your booking with {talker_name} is confirmed.',
-            'timestamp': timezone.now().isoformat(),
+            **base_payload,
+            'message': f'You have booking with {talker_name}',
         },
     )
 
