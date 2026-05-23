@@ -279,6 +279,11 @@ class SessionBooking(models.Model):
         blank=True,
         help_text='When payment was completed'
     )
+    reminder_notifications_sent = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text='Tracks sent booking reminders by recipient role and minutes before start'
+    )
     talker_reminder_sent_at = models.DateTimeField(
         null=True,
         blank=True,
@@ -403,7 +408,7 @@ class SessionBooking(models.Model):
 
         return True
 
-    def _build_reminder_message(self, recipient_role):
+    def _build_reminder_message(self, recipient_role, minutes_before=20):
         listener_name = self.listener.full_name or self.listener.email
         talker_name = self.talker.full_name or self.talker.email
         session_start = self.start_datetime_aware.astimezone(timezone.get_current_timezone())
@@ -414,10 +419,17 @@ class SessionBooking(models.Model):
 
         if recipient_role == 'talker':
             greeting = f"Hello {talker_name},"
-            role_line = f"Your session with listener {listener_name} is coming up soon."
+            other_role = 'listener'
+            other_name = listener_name
         else:
             greeting = f"Hello {listener_name},"
-            role_line = f"Your session with talker {talker_name} is coming up soon."
+            other_role = 'talker'
+            other_name = talker_name
+
+        if minutes_before <= 0:
+            role_line = f"Your session with {other_role} {other_name} starts now."
+        else:
+            role_line = f"Your session with {other_role} {other_name} starts in {minutes_before} minutes."
 
         return (
             f"{greeting}\n\n"
@@ -429,7 +441,22 @@ class SessionBooking(models.Model):
             "Please be ready before the session starts."
         )
 
-    def _build_reminder_notification(self, recipient_role):
+    def _reminder_bucket(self, recipient_role):
+        sent = self.reminder_notifications_sent or {}
+        bucket = sent.get(recipient_role) or {}
+        return bucket if isinstance(bucket, dict) else {}
+
+    def _has_reminder_been_sent(self, recipient_role, minutes_before):
+        return str(minutes_before) in self._reminder_bucket(recipient_role)
+
+    def _mark_reminder_sent(self, recipient_role, minutes_before):
+        sent = dict(self.reminder_notifications_sent or {})
+        bucket = dict(sent.get(recipient_role) or {})
+        bucket[str(minutes_before)] = timezone.now().isoformat()
+        sent[recipient_role] = bucket
+        self.reminder_notifications_sent = sent
+
+    def _build_reminder_notification(self, recipient_role, minutes_before):
         listener_name = self.listener.full_name or self.listener.email
         talker_name = self.talker.full_name or self.talker.email
         recipient_name = talker_name if recipient_role == 'talker' else listener_name
@@ -439,6 +466,7 @@ class SessionBooking(models.Model):
             'booking_id': str(self.id),
             'session_id': str(self.id),
             'recipient_role': recipient_role,
+            'reminder_minutes': minutes_before,
             'booking_date': self.booking_date.isoformat(),
             'start_time': self.start_time.strftime('%H:%M:%S'),
             'end_time': self.end_time.strftime('%H:%M:%S'),
@@ -453,12 +481,12 @@ class SessionBooking(models.Model):
                 'email': self.listener.email,
                 'full_name': listener_name,
             },
-            'message': f'Your booking is coming up soon, {recipient_name}.',
+            'message': self._build_reminder_message(recipient_role, minutes_before),
             'timestamp': timezone.now().isoformat(),
         }
 
-    def _send_booking_websocket_reminder(self, recipient_role):
-        notification = self._build_reminder_notification(recipient_role)
+    def _send_booking_websocket_reminder(self, recipient_role, minutes_before):
+        notification = self._build_reminder_notification(recipient_role, minutes_before)
         group_name = f"user_{self.talker_id}_notifications" if recipient_role == 'talker' else f"user_{self.listener_id}_notifications"
 
         channel_layer = get_channel_layer()
@@ -471,15 +499,17 @@ class SessionBooking(models.Model):
         )
 
     @classmethod
-    def send_upcoming_start_reminders(cls, minutes_before=20):
+    def send_upcoming_start_reminders(cls, minutes_before=20, window_seconds=60):
         """
         Send reminder emails for sessions starting within the next N minutes.
         Sends separately to talker/listener and tracks each send time to avoid duplicates.
         """
         now = timezone.now()
-        upper_bound = now + timedelta(minutes=minutes_before)
+        target_seconds = minutes_before * 60
+        lower_bound_seconds = -window_seconds if minutes_before == 0 else target_seconds - window_seconds
+        upper_bound_seconds = window_seconds if minutes_before == 0 else target_seconds
 
-        candidate_dates = {now.date(), upper_bound.date()}
+        candidate_dates = {now.date(), (now + timedelta(minutes=max(minutes_before, 1))).date()}
         queryset = cls.objects.select_related('talker', 'listener').filter(
             booking_date__in=candidate_dates,
             status='completed',
@@ -496,45 +526,57 @@ class SessionBooking(models.Model):
             start_dt = booking.start_datetime_aware
             seconds_until_start = (start_dt - now).total_seconds()
 
-            if seconds_until_start < 0:
+            if seconds_until_start < lower_bound_seconds:
                 continue
-            if seconds_until_start > minutes_before * 60:
+            if seconds_until_start > upper_bound_seconds:
                 continue
 
             stats['processed'] += 1
 
             try:
-                if booking.talker_reminder_sent_at is None and booking.talker and booking.talker.email:
+                if not booking._has_reminder_been_sent('talker', minutes_before) and booking.talker and booking.talker.email:
                     send_mail(
                         subject=booking._build_reminder_subject(),
-                        message=booking._build_reminder_message('talker'),
+                        message=booking._build_reminder_message('talker', minutes_before),
                         from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', None),
                         recipient_list=[booking.talker.email],
                         fail_silently=False,
                     )
-                    booking.talker_reminder_sent_at = timezone.now()
-                    booking._send_booking_websocket_reminder('talker')
+                    booking._mark_reminder_sent('talker', minutes_before)
+                    booking._send_booking_websocket_reminder('talker', minutes_before)
                     stats['talker_sent'] += 1
 
-                if booking.listener_reminder_sent_at is None and booking.listener and booking.listener.email:
+                if not booking._has_reminder_been_sent('listener', minutes_before) and booking.listener and booking.listener.email:
                     send_mail(
                         subject=booking._build_reminder_subject(),
-                        message=booking._build_reminder_message('listener'),
+                        message=booking._build_reminder_message('listener', minutes_before),
                         from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', None),
                         recipient_list=[booking.listener.email],
                         fail_silently=False,
                     )
-                    booking.listener_reminder_sent_at = timezone.now()
-                    booking._send_booking_websocket_reminder('listener')
+                    booking._mark_reminder_sent('listener', minutes_before)
+                    booking._send_booking_websocket_reminder('listener', minutes_before)
                     stats['listener_sent'] += 1
 
-                if booking.talker_reminder_sent_at or booking.listener_reminder_sent_at:
-                    booking.save(update_fields=['talker_reminder_sent_at', 'listener_reminder_sent_at', 'updated_at'])
+                if booking._has_reminder_been_sent('talker', minutes_before) or booking._has_reminder_been_sent('listener', minutes_before):
+                    booking.save(update_fields=['reminder_notifications_sent', 'updated_at'])
 
             except Exception:
                 stats['failed'] += 1
 
         return stats
+
+    @classmethod
+    def send_scheduled_start_reminders(cls):
+        """Send 10-minute, 5-minute, and start-time reminders."""
+        totals = {'processed': 0, 'talker_sent': 0, 'listener_sent': 0, 'failed': 0}
+        for minutes_before in (10, 5, 0):
+            stats = cls.send_upcoming_start_reminders(minutes_before=minutes_before)
+            totals['processed'] += stats.get('processed', 0)
+            totals['talker_sent'] += stats.get('talker_sent', 0)
+            totals['listener_sent'] += stats.get('listener_sent', 0)
+            totals['failed'] += stats.get('failed', 0)
+        return totals
 
     @classmethod
     def release_ended_listener_earnings(cls):

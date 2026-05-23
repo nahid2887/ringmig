@@ -16,7 +16,7 @@ def _booking_reminder_scheduler_loop(interval_seconds=60):
 
     while True:
         try:
-            stats = SessionBooking.send_upcoming_start_reminders(minutes_before=20)
+            stats = SessionBooking.send_scheduled_start_reminders()
             if stats.get('processed') or stats.get('talker_sent') or stats.get('listener_sent'):
                 logger.info(
                     'Booking reminder tick: processed=%s talker_sent=%s listener_sent=%s failed=%s',

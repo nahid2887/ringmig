@@ -873,42 +873,42 @@ class NotificationConsumer(AsyncWebsocketConsumer):
 
     async def _send_due_booking_reminders(self):
         now = timezone.now()
-        window_start = now + timedelta(minutes=20)
-        window_end = window_start + timedelta(seconds=self.BOOKING_REMINDER_CHECK_INTERVAL_SECONDS)
+        for minutes_before in (10, 5, 0):
+            due_reminders = await self.get_bookings_in_reminder_window(minutes_before, self.BOOKING_REMINDER_CHECK_INTERVAL_SECONDS)
+            for reminder in due_reminders:
+                reminder_key = f"{reminder['booking_id']}:{reminder['recipient_role']}:{minutes_before}"
+                if reminder_key in self.sent_booking_reminders:
+                    continue
 
-        due_reminders = await self.get_bookings_in_reminder_window(window_start, window_end)
-        for reminder in due_reminders:
-            reminder_key = f"{reminder['booking_id']}:{reminder['recipient_role']}"
-            if reminder_key in self.sent_booking_reminders:
-                continue
-
-            self.sent_booking_reminders.add(reminder_key)
-            await self._save_notification(
-                notification_type='booking_reminder',
-                title='Booking Reminder',
-                message='Your booking is coming up soon',
-                data={
+                self.sent_booking_reminders.add(reminder_key)
+                await self._save_notification(
+                    notification_type='booking_reminder',
+                    title='Booking Reminder',
+                    message=reminder['message'],
+                    data={
+                        'booking_id': reminder['booking_id'],
+                        'recipient_role': reminder['recipient_role'],
+                        'reminder_minutes': minutes_before,
+                        'booking_date': reminder['booking_date'],
+                        'start_time': reminder['start_time'],
+                        'end_time': reminder['end_time'],
+                    },
+                )
+                await self.send(text_data=json.dumps({
+                    'type': 'booking_reminder_notification',
                     'booking_id': reminder['booking_id'],
+                    'session_id': None,
                     'recipient_role': reminder['recipient_role'],
+                    'reminder_minutes': minutes_before,
                     'booking_date': reminder['booking_date'],
                     'start_time': reminder['start_time'],
                     'end_time': reminder['end_time'],
-                },
-            )
-            await self.send(text_data=json.dumps({
-                'type': 'booking_reminder_notification',
-                'booking_id': reminder['booking_id'],
-                'session_id': None,
-                'recipient_role': reminder['recipient_role'],
-                'booking_date': reminder['booking_date'],
-                'start_time': reminder['start_time'],
-                'end_time': reminder['end_time'],
-                'duration_minutes': reminder['duration_minutes'],
-                'talker': reminder['talker'],
-                'listener': reminder['listener'],
-                'message': 'Your booking is coming up soon',
-                'timestamp': now.isoformat(),
-            }))
+                    'duration_minutes': reminder['duration_minutes'],
+                    'talker': reminder['talker'],
+                    'listener': reminder['listener'],
+                    'message': reminder['message'],
+                    'timestamp': now.isoformat(),
+                }))
     
     # Database operations
     @database_sync_to_async
@@ -975,8 +975,13 @@ class NotificationConsumer(AsyncWebsocketConsumer):
         return result
 
     @database_sync_to_async
-    def get_bookings_in_reminder_window(self, window_start, window_end):
-        """Return user's bookings that start within [window_start, window_end)."""
+    def get_bookings_in_reminder_window(self, minutes_before, window_seconds):
+        """Return user's bookings that are due for a specific reminder milestone."""
+        now = timezone.now()
+        target_seconds = minutes_before * 60
+        lower_bound_seconds = -window_seconds if minutes_before == 0 else target_seconds - window_seconds
+        upper_bound_seconds = window_seconds if minutes_before == 0 else target_seconds
+
         qs = SessionBooking.objects.select_related('talker', 'listener').filter(
             Q(talker=self.user) | Q(listener=self.user),
             status='completed',
@@ -990,13 +995,26 @@ class NotificationConsumer(AsyncWebsocketConsumer):
         results = []
         for booking in qs:
             start_dt = booking.start_datetime_aware
-            if not (window_start <= start_dt < window_end):
+            seconds_until_start = (start_dt - now).total_seconds()
+            if not (lower_bound_seconds <= seconds_until_start <= upper_bound_seconds):
                 continue
 
             recipient_role = 'talker' if booking.talker_id == self.user.id else 'listener'
+            if recipient_role == 'talker':
+                recipient_name = booking.talker.full_name or booking.talker.email
+                other_name = booking.listener.full_name or booking.listener.email
+            else:
+                recipient_name = booking.listener.full_name or booking.listener.email
+                other_name = booking.talker.full_name or booking.talker.email
+            if minutes_before <= 0:
+                message = f'Your session with {other_name} starts now, {recipient_name}.'
+            else:
+                message = f'Your session with {other_name} starts in {minutes_before} minutes, {recipient_name}.'
+
             results.append({
                 'booking_id': str(booking.id),
                 'recipient_role': recipient_role,
+                'reminder_minutes': minutes_before,
                 'booking_date': booking.booking_date.isoformat(),
                 'start_time': booking.start_time.strftime('%H:%M:%S'),
                 'end_time': booking.end_time.strftime('%H:%M:%S'),
@@ -1011,6 +1029,7 @@ class NotificationConsumer(AsyncWebsocketConsumer):
                     'email': booking.listener.email,
                     'full_name': booking.listener.full_name,
                 },
+                'message': message,
             })
 
         return results
