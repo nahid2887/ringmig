@@ -1065,9 +1065,17 @@ def _build_listener_booking_state(listener):
     # Clean up expired unpaid bookings
     SessionBooking.cleanup_expired_unpaid(listener=listener)
 
-    all_bookings = SessionBooking.objects.filter(
+    all_bookings = SessionBooking.objects.select_related('talker', 'listener').filter(
         listener=listener,
     ).order_by('-created_at')[:100]
+
+    def _display_name(user):
+        full_name = (user.full_name or '').strip()
+        if full_name:
+            return full_name
+        if user.email and '@' in user.email:
+            return user.email.split('@')[0]
+        return user.email or 'User'
     
     # Filter out expired pending bookings
     current_time = timezone.now()
@@ -1080,6 +1088,11 @@ def _build_listener_booking_state(listener):
         {
             'id': str(booking.id),
             'talker_id': booking.talker_id,
+            'talker_name': _display_name(booking.talker),
+            'talker_email': booking.talker.email,
+            'listener_id': booking.listener_id,
+            'listener_name': _display_name(booking.listener),
+            'listener_email': booking.listener.email,
             'booking_date': booking.booking_date.isoformat(),
             'start_time': booking.start_time.strftime('%H:%M:%S'),
             'end_time': booking.end_time.strftime('%H:%M:%S'),
