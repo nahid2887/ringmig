@@ -791,10 +791,13 @@ class ListenerConnectAccountView(APIView):
                 logger.info(f"Created new Stripe Connect account for user {user.id}: {account_id}")
             
             # Create account link for onboarding
+            # Use frontend URLs so Stripe redirects the user's browser to the authenticated UI
+            frontend_return = 'https://ring-mig.com/dashboard/listener'
+            frontend_refresh = 'https://ring-mig.com/dashboard/listener?connected=pending'
             account_link = stripe.AccountLink.create(
                 account=account_id,
-                refresh_url=request.build_absolute_uri('/api/payment/listener/connect/refresh/'),
-                return_url=request.build_absolute_uri('/api/payment/listener/connect/return/'),
+                refresh_url=frontend_refresh,
+                return_url=frontend_return,
                 type='account_onboarding',
             )
             
@@ -958,10 +961,13 @@ class ListenerConnectRefreshView(APIView):
             listener_account = StripeListenerAccount.objects.get(listener=user)
             
             # Create a new account link
+            # Redirect back to the frontend so the user stays authenticated
+            frontend_return = 'https://ring-mig.com/dashboard/listener'
+            frontend_refresh = 'https://ring-mig.com/dashboard/listener?connected=pending'
             account_link = stripe.AccountLink.create(
                 account=listener_account.stripe_account_id,
-                refresh_url=request.build_absolute_uri('/api/payment/listener/connect/refresh/'),
-                return_url=request.build_absolute_uri('/api/payment/listener/connect/return/'),
+                refresh_url=frontend_refresh,
+                return_url=frontend_return,
                 type='account_onboarding',
             )
             

@@ -110,10 +110,13 @@ class StripeListenerAccountAdmin(admin.ModelAdmin):
         """Generate/regenerate Stripe Connect onboarding link."""
         for obj in queryset:
             try:
+                # Point admin-generated links to the frontend so listeners are redirected
+                frontend_return = 'https://ring-mig.com/dashboard/listener'
+                frontend_refresh = 'https://ring-mig.com/dashboard/listener?connected=pending'
                 account_link = stripe.AccountLink.create(
                     account=obj.stripe_account_id,
-                    refresh_url=request.build_absolute_uri('/api/payment/listener/connect/refresh/'),
-                    return_url=request.build_absolute_uri('/api/payment/listener/connect/return/'),
+                    refresh_url=frontend_refresh,
+                    return_url=frontend_return,
                     type='account_onboarding',
                 )
                 
