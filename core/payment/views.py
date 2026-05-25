@@ -1049,9 +1049,9 @@ class ListenerConnectReturnView(APIView):
                 listener_account.is_verified = True
                 listener_account.save()
                 logger.info(f"Listener account verified: {user.id}")
-                return redirect('https://www.ring-mig.com/dashboard/listener')
+                return redirect('https://ring-mig.com/dashboard/listener')
             else:
-                pending_url = 'https://www.ring-mig.com/dashboard/listener?connected=pending'
+                pending_url = 'https://ring-mig.com/dashboard/listener?connected=pending'
                 return redirect(pending_url)
             
         except StripeListenerAccount.DoesNotExist:
