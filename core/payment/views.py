@@ -773,6 +773,7 @@ class ListenerConnectAccountView(APIView):
                     country='US',  # Change based on your needs
                     email=user.email,
                     capabilities={
+                        'card_payments': {'requested': True},
                         'transfers': {'requested': True},
                         'payouts': {'requested': True},
                     },
