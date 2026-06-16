@@ -770,7 +770,7 @@ class ListenerConnectAccountView(APIView):
                 # Create new Stripe Connect Express account
                 account = stripe.Account.create(
                     type='express',
-                    #country='US',  # Change based on your needs
+                    country= user.location,  # Change based on your needs
                     email=user.email,
                     capabilities={
                         'card_payments': {'requested': True},
