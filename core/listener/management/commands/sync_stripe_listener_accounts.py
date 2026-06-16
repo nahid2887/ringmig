@@ -18,6 +18,11 @@ User = get_user_model()
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
 
+def is_connect_disabled_error(exc):
+    error_text = str(exc)
+    return 'signed up for Connect' in error_text or 'Connect' in error_text
+
+
 class Command(BaseCommand):
     help = 'Create Stripe Connect accounts for listeners who do not yet have one'
 
@@ -86,6 +91,18 @@ class Command(BaseCommand):
                 created_count += 1
                 self.stdout.write(self.style.SUCCESS(f'CREATED: {listener.email} -> {stripe_account.id}'))
 
+            except stripe.error.StripeError as exc:
+                error_count += 1
+                if is_connect_disabled_error(exc):
+                    self.stderr.write(
+                        self.style.ERROR(
+                            f'ERROR: {listener.email} -> Stripe Connect is not enabled for the platform account. '
+                            'Enable Connect in the Stripe dashboard for the account behind STRIPE_SECRET_KEY.'
+                        )
+                    )
+                    continue
+
+                self.stderr.write(self.style.ERROR(f'ERROR: {listener.email} -> {str(exc)}'))
             except Exception as exc:
                 error_count += 1
                 self.stderr.write(self.style.ERROR(f'ERROR: {listener.email} -> {str(exc)}'))

@@ -771,6 +771,10 @@ class ListenerConnectAccountView(APIView):
                 return mapped_code
 
         return 'US'
+
+    def _is_connect_disabled_error(self, exc):
+        error_text = str(exc)
+        return 'signed up for Connect' in error_text or 'Connect' in error_text
     
     def post(self, request):
         """
@@ -857,6 +861,14 @@ class ListenerConnectAccountView(APIView):
             
         except stripe.error.StripeError as e:
             logger.error(f"Stripe Connect error: {str(e)}")
+            if self._is_connect_disabled_error(e):
+                return Response(
+                    {
+                        'error': 'Stripe Connect is not enabled for this platform account',
+                        'details': 'Enable Stripe Connect in the Stripe dashboard for the account behind STRIPE_SECRET_KEY, then retry listener onboarding.',
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             return Response(
                 {'error': 'Failed to create payout account', 'details': str(e)},
                 status=status.HTTP_400_BAD_REQUEST
