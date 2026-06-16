@@ -32,6 +32,7 @@ from .serializers import (
     CreateTipSerializer,
     TipPaymentIntentSerializer,
 )
+from users.serializers import COUNTRY_CHOICES
 
 # Configure Stripe
 stripe.api_key = settings.STRIPE_SECRET_KEY
@@ -737,6 +738,39 @@ class ListenerConnectAccountView(APIView):
     """
     
     permission_classes = [IsAuthenticated]
+
+    def _resolve_listener_country(self, user):
+        """Resolve a Stripe-compatible country code for the listener."""
+        country_codes = {code.upper(): code.upper() for code, _ in COUNTRY_CHOICES if code}
+        country_names = {name.strip().lower(): code.upper() for code, name in COUNTRY_CHOICES if code}
+
+        possible_values = [
+            getattr(user, 'country', ''),
+            getattr(getattr(user, 'listener_profile', None), 'location', ''),
+            getattr(user, 'location', ''),
+        ]
+
+        for raw_value in possible_values:
+            value = (raw_value or '').strip()
+            if not value:
+                continue
+
+            normalized = value.upper()
+            if normalized in country_codes:
+                return normalized
+
+            if ',' in value:
+                tail_value = value.split(',')[-1].strip()
+                tail_normalized = tail_value.upper()
+                if tail_normalized in country_codes:
+                    return tail_normalized
+                value = tail_value
+
+            mapped_code = country_names.get(value.lower())
+            if mapped_code:
+                return mapped_code
+
+        return 'US'
     
     def post(self, request):
         """
@@ -768,9 +802,10 @@ class ListenerConnectAccountView(APIView):
                 is_new = False
             except StripeListenerAccount.DoesNotExist:
                 # Create new Stripe Connect Express account
+                listener_country = self._resolve_listener_country(user)
                 account = stripe.Account.create(
                     type='express',
-                    country= user.location,  # Change based on your needs
+                    country=listener_country,
                     email=user.email,
                     capabilities={
                         'card_payments': {'requested': True},
