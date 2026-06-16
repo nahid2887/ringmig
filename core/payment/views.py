@@ -623,7 +623,10 @@ class StripeWebhookView(APIView):
                     payment.save()
                     
                     # Transfer listener amount to Stripe Connect account
-                    transfer_result = handle_booking_payment_succeeded(payment.booking)
+                    transfer_result = handle_booking_payment_succeeded(
+                        payment.booking,
+                        source_transaction=payment.stripe_charge_id,
+                    )
                     logger.info(
                         f"Payment succeeded for booking {payment.booking.id}. "
                         f"Transfer: {transfer_result['message']}"
@@ -642,7 +645,10 @@ class StripeWebhookView(APIView):
                     call_package.save(update_fields=['stripe_payment_intent_id', 'stripe_charge_id'])
                     
                     # Transfer listener amount to Stripe Connect account
-                    transfer_result = handle_call_package_payment_succeeded(call_package)
+                    transfer_result = handle_call_package_payment_succeeded(
+                        call_package,
+                        source_transaction=call_package.stripe_charge_id,
+                    )
                     logger.info(
                         f"Call package {call_package_id} payment succeeded. "
                         f"Transfer: {transfer_result['message']}"
@@ -660,7 +666,10 @@ class StripeWebhookView(APIView):
                     tip.save(update_fields=['stripe_payment_intent_id', 'stripe_charge_id'])
                     
                     # Transfer listener amount to Stripe Connect account
-                    transfer_result = handle_tip_payment_succeeded(tip)
+                    transfer_result = handle_tip_payment_succeeded(
+                        tip,
+                        source_transaction=tip.stripe_charge_id,
+                    )
                     logger.info(
                         f"Tip {tip_id} payment succeeded. "
                         f"Transfer: {transfer_result['message']}"
@@ -1295,6 +1304,18 @@ class StripeWebhookView(APIView):
                     session_booking.transaction_id = payment_intent_id or session_booking.transaction_id
                     session_booking.payment_completed_at = timezone.now()
 
+                    source_transaction = None
+                    if payment_intent_id:
+                        try:
+                            payment_intent = stripe.PaymentIntent.retrieve(payment_intent_id)
+                            source_transaction = payment_intent.get('latest_charge', '')
+                        except stripe.error.StripeError as exc:
+                            logger.warning(
+                                "Could not resolve latest charge for session booking %s: %s",
+                                session_booking_id,
+                                str(exc),
+                            )
+
                     if not session_booking.stripe_transfer_id:
                         transfer_result = transfer_to_listener_stripe_account(
                             listener=session_booking.listener,
@@ -1302,6 +1323,7 @@ class StripeWebhookView(APIView):
                             source_type='session_booking',
                             source_id=session_booking.id,
                             description=f"Session booking payment for {session_booking.listener.email}",
+                            source_transaction=source_transaction,
                         )
                         if transfer_result['success']:
                             session_booking.stripe_transfer_id = transfer_result['transfer_id']
@@ -1402,7 +1424,24 @@ class StripeWebhookView(APIView):
                         
                         if tip.status == 'pending':
                             if tip.confirm_payment():
-                                transfer_result = handle_tip_payment_succeeded(tip)
+                                source_transaction = None
+                                if payment_intent_id:
+                                    try:
+                                        payment_intent = stripe.PaymentIntent.retrieve(payment_intent_id)
+                                        source_transaction = payment_intent.get('latest_charge', '')
+                                        tip.stripe_charge_id = source_transaction or ''
+                                        tip.save(update_fields=['stripe_charge_id', 'updated_at'])
+                                    except stripe.error.StripeError as exc:
+                                        logger.warning(
+                                            "Could not resolve latest charge for tip %s: %s",
+                                            tip_id,
+                                            str(exc),
+                                        )
+
+                                transfer_result = handle_tip_payment_succeeded(
+                                    tip,
+                                    source_transaction=source_transaction,
+                                )
                                 logger.info(f"✓ Tip payment via checkout completed: ${tip.amount} from {tip.talker.email} to {tip.listener.email}")
                                 logger.info(f"💰 Listener transfer result: {transfer_result.get('message')}")
                             else:

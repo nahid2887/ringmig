@@ -15,7 +15,14 @@ logger = logging.getLogger(__name__)
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
 
-def transfer_to_listener_stripe_account(listener, amount, source_type, source_id, description="Payout from booking/call"):
+def transfer_to_listener_stripe_account(
+    listener,
+    amount,
+    source_type,
+    source_id,
+    description="Payout from booking/call",
+    source_transaction=None,
+):
     """
     Automatically transfer listener's earned amount to their connected Stripe account.
     
@@ -68,18 +75,23 @@ def transfer_to_listener_stripe_account(listener, amount, source_type, source_id
             # Create transfer
             amount_cents = int(amount * 100)  # Convert to cents
             
-            transfer = stripe.Transfer.create(
-                amount=amount_cents,
-                currency='usd',
-                destination=stripe_account.stripe_account_id,
-                description=description,
-                metadata={
+            transfer_kwargs = {
+                'amount': amount_cents,
+                'currency': 'usd',
+                'destination': stripe_account.stripe_account_id,
+                'description': description,
+                'metadata': {
                     'source_type': source_type,
                     'source_id': source_id,
                     'listener_id': listener.id,
-                    'listener_email': listener.email
-                }
-            )
+                    'listener_email': listener.email,
+                },
+            }
+
+            if source_transaction:
+                transfer_kwargs['source_transaction'] = source_transaction
+
+            transfer = stripe.Transfer.create(**transfer_kwargs)
             
             logger.info(
                 f"Successfully transferred ${amount} to listener {listener.email} "
@@ -124,7 +136,7 @@ def transfer_to_listener_stripe_account(listener, amount, source_type, source_id
         }
 
 
-def handle_call_package_payment_succeeded(call_package):
+def handle_call_package_payment_succeeded(call_package, source_transaction=None):
     """
     Handle successful payment for a call package.
     Updates status and transfers listener amount to their Stripe account.
@@ -159,7 +171,8 @@ def handle_call_package_payment_succeeded(call_package):
                 amount=locked_call_package.listener_amount,
                 source_type='call_package',
                 source_id=locked_call_package.id,
-                description=f"Payment for call package: {locked_call_package.package.name} ({locked_call_package.package.duration_minutes} min)"
+                description=f"Payment for call package: {locked_call_package.package.name} ({locked_call_package.package.duration_minutes} min)",
+                source_transaction=source_transaction or locked_call_package.stripe_charge_id or None,
             )
 
             # Update call package with transfer info if successful
@@ -178,7 +191,7 @@ def handle_call_package_payment_succeeded(call_package):
         }
 
 
-def handle_tip_payment_succeeded(tip):
+def handle_tip_payment_succeeded(tip, source_transaction=None):
     """
     Handle successful payment for a tip.
     Updates status and transfers listener amount to their Stripe account.
@@ -214,7 +227,8 @@ def handle_tip_payment_succeeded(tip):
                 amount=locked_tip.listener_amount,
                 source_type='tip',
                 source_id=locked_tip.id,
-                description=f"Tip from {locked_tip.talker.email}"
+                description=f"Tip from {locked_tip.talker.email}",
+                source_transaction=source_transaction or locked_tip.stripe_charge_id or None,
             )
 
             if transfer_result['success']:
@@ -232,7 +246,7 @@ def handle_tip_payment_succeeded(tip):
         }
 
 
-def handle_booking_payment_succeeded(booking):
+def handle_booking_payment_succeeded(booking, source_transaction=None):
     """
     Handle successful payment for a booking.
     Transfers listener amount to their Stripe account.
@@ -257,7 +271,8 @@ def handle_booking_payment_succeeded(booking):
             amount=booking.listener_amount,
             source_type='booking',
             source_id=booking.id,
-            description=f"Payment for booking: {booking.package.name}"
+            description=f"Payment for booking: {booking.package.name}",
+            source_transaction=source_transaction,
         )
         
         return transfer_result
