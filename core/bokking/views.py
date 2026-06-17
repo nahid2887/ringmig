@@ -1679,7 +1679,9 @@ class SessionBookingViewSet(viewsets.ModelViewSet):
             booking.status = 'completed'
             booking.transaction_id = payment_data.get('payment_intent_id')
             booking.payment_completed_at = timezone.now()
-            booking.save(update_fields=['status', 'transaction_id', 'payment_completed_at', 'updated_at'])
+            booking.listener_earnings_released = True
+            booking.listener_earnings_released_at = timezone.now()
+            booking.save(update_fields=['status', 'transaction_id', 'payment_completed_at', 'listener_earnings_released', 'listener_earnings_released_at', 'updated_at'])
             _send_booking_completed_notification(booking)
 
         if hasattr(listener, 'booking_availability'):
@@ -1739,7 +1741,9 @@ class SessionBookingViewSet(viewsets.ModelViewSet):
             booking.status = 'completed'
             booking.transaction_id = payment_intent_id
             booking.payment_completed_at = timezone.now()
-            booking.save(update_fields=['status', 'transaction_id', 'payment_completed_at', 'updated_at'])
+            booking.listener_earnings_released = True
+            booking.listener_earnings_released_at = timezone.now()
+            booking.save(update_fields=['status', 'transaction_id', 'payment_completed_at', 'listener_earnings_released', 'listener_earnings_released_at', 'updated_at'])
             _send_booking_completed_notification(booking)
 
             if hasattr(booking.listener, 'booking_availability'):

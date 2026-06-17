@@ -1330,6 +1330,11 @@ class StripeWebhookView(APIView):
 
                     session_booking.save(update_fields=['status', 'transaction_id', 'payment_completed_at', 'stripe_transfer_id', 'updated_at'])
 
+                    # Mark earnings as released so listener can see in transaction history
+                    session_booking.listener_earnings_released = True
+                    session_booking.listener_earnings_released_at = timezone.now()
+                    session_booking.save(update_fields=['listener_earnings_released', 'listener_earnings_released_at'])
+
                     _send_booking_completed_notification(session_booking)
 
                     if hasattr(session_booking.listener, 'booking_availability'):
