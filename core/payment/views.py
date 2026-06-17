@@ -1892,12 +1892,16 @@ class TipViewSet(viewsets.ModelViewSet):
                 amount=int(amount * 100),  # Convert to cents
                 currency='usd',
                 customer=stripe_customer.stripe_customer_id,
+                application_fee_amount=int(tip.admin_fee * 100),
+                transfer_data={
+                    'destination': listener_account.stripe_account_id,
+                },
                 metadata={
                     'tip_id': tip.id,
                     'talker_id': request.user.id,
                     'listener_id': listener.id,
                     'type': 'tip',
-                    'payout_mode': 'listener_transfer',
+                    'payout_mode': 'destination_charge',
                     'listener_stripe_account_id': listener_account.stripe_account_id,
                 },
                 automatic_payment_methods={'enabled': True}
@@ -1926,16 +1930,20 @@ class TipViewSet(viewsets.ModelViewSet):
                     'talker_id': request.user.id,
                     'listener_id': listener.id,
                     'type': 'tip',
-                    'payout_mode': 'listener_transfer',
+                    'payout_mode': 'destination_charge',
                     'listener_stripe_account_id': listener_account.stripe_account_id,
                 },
                 payment_intent_data={
+                    'application_fee_amount': int(tip.admin_fee * 100),
+                    'transfer_data': {
+                        'destination': listener_account.stripe_account_id,
+                    },
                     'metadata': {
                         'tip_id': tip.id,
                         'talker_id': request.user.id,
                         'listener_id': listener.id,
                         'type': 'tip',
-                        'payout_mode': 'listener_transfer',
+                        'payout_mode': 'destination_charge',
                         'listener_stripe_account_id': listener_account.stripe_account_id,
                     }
                 }

@@ -221,7 +221,41 @@ def handle_tip_payment_succeeded(tip, source_transaction=None):
             locked_tip.paid_at = timezone.now()
             locked_tip.save(update_fields=['status', 'paid_at', 'updated_at'])
 
-            # Transfer to listener
+            # Check if this tip was paid via destination charge
+            is_destination_charge = False
+            if locked_tip.stripe_payment_intent_id:
+                try:
+                    payment_intent = stripe.PaymentIntent.retrieve(locked_tip.stripe_payment_intent_id)
+                    is_destination_charge = payment_intent.get('metadata', {}).get('payout_mode') == 'destination_charge'
+                except stripe.error.StripeError:
+                    is_destination_charge = False
+
+            if is_destination_charge:
+                # For destination charges, Stripe Connect handles the transfer automatically.
+                # We just retrieve the transfer ID from the charge and save it.
+                transfer_id = None
+                charge_id = source_transaction or locked_tip.stripe_charge_id
+                if charge_id:
+                    try:
+                        charge = stripe.Charge.retrieve(charge_id)
+                        transfer_id = charge.get('transfer')
+                        if transfer_id:
+                            locked_tip.stripe_transfer_id = transfer_id
+                            locked_tip.save(update_fields=['stripe_transfer_id'])
+                    except stripe.error.StripeError as exc:
+                        logger.warning(
+                            "Could not resolve automatic transfer ID for tip %s: %s",
+                            locked_tip.id,
+                            str(exc),
+                        )
+                return {
+                    'success': True,
+                    'transfer_id': transfer_id,
+                    'error': None,
+                    'message': f'Destination charge processed automatically by Stripe Connect. Transfer ID: {transfer_id}'
+                }
+
+            # Transfer to listener (fallback/legacy mode)
             transfer_result = transfer_to_listener_stripe_account(
                 listener=locked_tip.listener,
                 amount=locked_tip.listener_amount,
