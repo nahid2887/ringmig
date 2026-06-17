@@ -1316,19 +1316,7 @@ class StripeWebhookView(APIView):
                                 str(exc),
                             )
 
-                    if not session_booking.stripe_transfer_id:
-                        transfer_result = transfer_to_listener_stripe_account(
-                            listener=session_booking.listener,
-                            amount=session_booking.listener_amount,
-                            source_type='session_booking',
-                            source_id=session_booking.id,
-                            description=f"Session booking payment for {session_booking.listener.email}",
-                            source_transaction=source_transaction,
-                        )
-                        if transfer_result['success']:
-                            session_booking.stripe_transfer_id = transfer_result['transfer_id']
-
-                    session_booking.save(update_fields=['status', 'transaction_id', 'payment_completed_at', 'stripe_transfer_id', 'updated_at'])
+                    session_booking.save(update_fields=['status', 'transaction_id', 'payment_completed_at', 'updated_at'])
 
                     # Mark earnings as released so listener can see in transaction history
                     session_booking.listener_earnings_released = True

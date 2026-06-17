@@ -942,6 +942,14 @@ class ListenerBalanceViewSet(viewsets.ReadOnlyModelViewSet):
                 listener_refund_source = None
                 listener_transfer_reversal = None
 
+                is_destination_charge = False
+                if booking.transaction_id:
+                    try:
+                        payment_intent = stripe.PaymentIntent.retrieve(booking.transaction_id)
+                        is_destination_charge = payment_intent.get('metadata', {}).get('payout_mode') == 'destination_charge'
+                    except stripe.error.StripeError:
+                        is_destination_charge = False
+
                 if booking.stripe_transfer_id and listener_refund_amount > 0:
                     transfer_reversal = reverse_booking_listener_transfer(booking, listener_refund_amount)
                     if transfer_reversal and transfer_reversal.get('success'):
@@ -957,7 +965,7 @@ class ListenerBalanceViewSet(viewsets.ReadOnlyModelViewSet):
                             transfer_reversal.get('message') if isinstance(transfer_reversal, dict) else 'unknown error',
                         )
 
-                if listener_refund_source is None and listener_refund_amount > 0:
+                if listener_refund_source is None and listener_refund_amount > 0 and not is_destination_charge:
                     listener_balance, _ = ListenerBalance.objects.select_for_update().get_or_create(
                         listener=request.user,
                         defaults={'available_balance': Decimal('0.00'), 'total_earned': Decimal('0.00')},
@@ -984,6 +992,8 @@ class ListenerBalanceViewSet(viewsets.ReadOnlyModelViewSet):
                         )
 
                     listener_refund_source = 'listener_balance'
+                elif listener_refund_source is None and listener_refund_amount > 0 and is_destination_charge:
+                    listener_refund_source = 'stripe_destination_charge_reversal'
 
                 refund_tracker.total_refunded = (already_refunded + refund_amount).quantize(Decimal('0.01'))
                 refund_tracker.save(update_fields=['total_refunded', 'updated_at'])

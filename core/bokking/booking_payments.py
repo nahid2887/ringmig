@@ -35,6 +35,10 @@ def create_session_booking_payment_intent(booking, payment_method_id=None):
             'amount': amount_cents,
             'currency': 'usd',
             'customer': stripe_customer.stripe_customer_id,
+            'application_fee_amount': int(booking.package.app_fee * 100),
+            'transfer_data': {
+                'destination': listener_account.stripe_account_id,
+            },
             'metadata': {
                 'session_booking_id': str(booking.id),
                 'talker_id': booking.talker.id,
@@ -42,7 +46,7 @@ def create_session_booking_payment_intent(booking, payment_method_id=None):
                 'booking_date': booking.booking_date.isoformat(),
                 'start_time': booking.start_time.strftime('%H:%M:%S'),
                 'duration_minutes': booking.duration_minutes,
-                'payout_mode': 'listener_transfer',
+                'payout_mode': 'destination_charge',
                 'listener_stripe_account_id': listener_account.stripe_account_id,
             },
             'description': (
@@ -89,8 +93,20 @@ def create_session_booking_payment_intent(booking, payment_method_id=None):
             metadata={
                 'session_booking_id': str(booking.id),
                 'payment_intent_id': payment_intent.id,
-                'payout_mode': 'listener_transfer',
+                'payout_mode': 'destination_charge',
                 'listener_stripe_account_id': listener_account.stripe_account_id,
+            },
+            payment_intent_data={
+                'application_fee_amount': int(booking.package.app_fee * 100),
+                'transfer_data': {
+                    'destination': listener_account.stripe_account_id,
+                },
+                'metadata': {
+                    'session_booking_id': str(booking.id),
+                    'payment_intent_id': payment_intent.id,
+                    'payout_mode': 'destination_charge',
+                    'listener_stripe_account_id': listener_account.stripe_account_id,
+                },
             },
         )
 
@@ -152,10 +168,17 @@ def process_stripe_refund(booking, amount=None):
         else:
             refund_amount = None  # full refund
 
+        payment_intent = stripe.PaymentIntent.retrieve(payment_intent_id)
+        is_destination_charge = payment_intent.get('metadata', {}).get('payout_mode') == 'destination_charge'
+
         # Create refund using payment_intent (requested flow)
         refund_data = {
             "payment_intent": payment_intent_id,
         }
+
+        if is_destination_charge:
+            refund_data["reverse_transfer"] = True
+            refund_data["refund_application_fee"] = True
 
         if refund_amount:
             refund_data["amount"] = refund_amount
