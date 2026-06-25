@@ -1,3 +1,4 @@
+from django.core.validators import FileExtensionValidator
 from rest_framework import serializers
 from .models import TalkerProfile, FavoriteListener, TalkerReport, TalkerSuspension, TalkerBalance
 from listener.models import ListenerProfile
@@ -236,6 +237,11 @@ class TalkerProfileSerializer(serializers.ModelSerializer):
     user_email = serializers.CharField(source='user.email', read_only=True)
     language = serializers.CharField(source='user.language', read_only=True)
     profile_image_url = serializers.SerializerMethodField()
+    profile_image = serializers.FileField(
+        required=False,
+        allow_null=True,
+        validators=[FileExtensionValidator(allowed_extensions=['jpg', 'jpeg', 'png', 'gif', 'webp', 'avif', 'svg'])]
+    )
 
     class Meta:
         model = TalkerProfile
