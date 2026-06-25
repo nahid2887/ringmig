@@ -171,6 +171,51 @@ class ListenerProfileViewSet(viewsets.ModelViewSet):
             payload = request.data.copy() if hasattr(request.data, 'copy') else dict(request.data)
             invalid_tokens = {'undefined', 'null', 'none'}
 
+            # Map bracket keys like specialties[] to specialties
+            for key in list(payload.keys()):
+                if key.endswith('[]'):
+                    clean_key = key[:-2]
+                    payload[clean_key] = payload.pop(key)
+
+            # Normalize and parse JSON/list fields (specialties, topics, languages)
+            import json
+            for key in ['specialties', 'topics', 'languages']:
+                if key in payload:
+                    val = payload[key]
+                    if isinstance(val, str):
+                        val_stripped = val.strip()
+                        if not val_stripped or val_stripped.lower() in invalid_tokens:
+                            payload[key] = []
+                        elif val_stripped.startswith('[') or val_stripped.startswith('{'):
+                            try:
+                                payload[key] = json.loads(val_stripped)
+                            except json.JSONDecodeError:
+                                if (val_stripped.startswith('[') and val_stripped.endswith(']')) or \
+                                   (val_stripped.startswith('(') and val_stripped.endswith(')')):
+                                    val_stripped = val_stripped[1:-1].strip()
+                                payload[key] = [item.strip().strip("'").strip('"') for item in val_stripped.split(',') if item.strip()]
+                        else:
+                            payload[key] = [item.strip().strip("'").strip('"') for item in val_stripped.split(',') if item.strip()]
+                    elif isinstance(val, list):
+                        payload[key] = [item for item in val if item and str(item).lower() not in invalid_tokens]
+                    elif val is None:
+                        payload[key] = []
+
+            # Normalize invalid string tokens for all other fields
+            for key in list(payload.keys()):
+                if key in ['specialties', 'topics', 'languages']:
+                    continue
+                val = payload[key]
+                if isinstance(val, str):
+                    val_str = val.strip()
+                    if val_str.lower() in invalid_tokens:
+                        if key in ['hourly_rate', 'is_available', 'accept_direct_calls']:
+                            payload.pop(key)
+                        elif key == 'profile_image':
+                            payload[key] = None
+                        else:
+                            payload[key] = ''
+
             language_value = str(payload.get('language', '')).strip().lower()
             if language_value in invalid_tokens:
                 language_value = ''

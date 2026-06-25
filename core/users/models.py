@@ -159,7 +159,6 @@ class PasswordResetOTP(models.Model):
     class Meta:
         verbose_name = _('Password Reset OTP')
         verbose_name_plural = _('Password Reset OTPs')
-        unique_together = ('email', 'is_used')
     
     def __str__(self):
         return f"Password Reset OTP for {self.email}"
