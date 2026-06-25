@@ -168,20 +168,33 @@ class ListenerProfileViewSet(viewsets.ModelViewSet):
             return Response(serializer.data)
 
         elif request.method in ['PUT', 'PATCH']:
-            payload = request.data.copy() if hasattr(request.data, 'copy') else dict(request.data)
+            # Convert request data to a standard dictionary with support for QueryDict getlist.
             invalid_tokens = {'undefined', 'null', 'none'}
-
-            # Map bracket keys like specialties[] to specialties
-            for key in list(payload.keys()):
-                if key.endswith('[]'):
-                    clean_key = key[:-2]
-                    payload[clean_key] = payload.pop(key)
+            if hasattr(request.data, 'getlist'):
+                payload = {}
+                for key in request.data.keys():
+                    clean_key = key[:-2] if key.endswith('[]') else key
+                    if key.endswith('[]') or clean_key in ['specialties', 'topics', 'languages']:
+                        payload[clean_key] = request.data.getlist(key)
+                    else:
+                        payload[clean_key] = request.data.get(key)
+            else:
+                payload = request.data.copy() if hasattr(request.data, 'copy') else dict(request.data)
+                # Map bracket keys like specialties[] to specialties
+                for key in list(payload.keys()):
+                    if key.endswith('[]'):
+                        clean_key = key[:-2]
+                        payload[clean_key] = payload.pop(key)
 
             # Normalize and parse JSON/list fields (specialties, topics, languages)
             import json
             for key in ['specialties', 'topics', 'languages']:
                 if key in payload:
                     val = payload[key]
+                    # Unpack single-item lists of strings for string parsing
+                    if isinstance(val, list) and len(val) == 1 and isinstance(val[0], str):
+                        val = val[0]
+
                     if isinstance(val, str):
                         val_stripped = val.strip()
                         if not val_stripped or val_stripped.lower() in invalid_tokens:
@@ -197,7 +210,23 @@ class ListenerProfileViewSet(viewsets.ModelViewSet):
                         else:
                             payload[key] = [item.strip().strip("'").strip('"') for item in val_stripped.split(',') if item.strip()]
                     elif isinstance(val, list):
-                        payload[key] = [item for item in val if item and str(item).lower() not in invalid_tokens]
+                        # Clean up each item in list, unpack if any item is a JSON-encoded string
+                        cleaned_list = []
+                        for item in val:
+                            if not item or str(item).lower() in invalid_tokens:
+                                continue
+                            if isinstance(item, str) and (item.strip().startswith('[') or item.strip().startswith('{')):
+                                try:
+                                    parsed = json.loads(item.strip())
+                                    if isinstance(parsed, list):
+                                        cleaned_list.extend(parsed)
+                                    else:
+                                        cleaned_list.append(parsed)
+                                except json.JSONDecodeError:
+                                    cleaned_list.append(item)
+                            else:
+                                cleaned_list.append(item)
+                        payload[key] = cleaned_list
                     elif val is None:
                         payload[key] = []
 
