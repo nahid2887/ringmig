@@ -1072,41 +1072,44 @@ class ListenerBalanceViewSet(viewsets.ReadOnlyModelViewSet):
                 refund_tracker.total_refunded = (already_refunded + refund_amount).quantize(Decimal('0.01'))
                 refund_tracker.save(update_fields=['total_refunded', 'updated_at'])
 
-                channel_layer = get_channel_layer()
-                if channel_layer:
-                    event_payload = {
-                        'type': 'booking_refund_notification',
-                        'booking_id': str(booking.id),
-                        'refund_amount': str(refund_amount),
-                        'listener_refund_amount': str(listener_refund_amount),
-                        'admin_refund_amount': str(admin_refund_amount),
-                        'listener_refund_source': listener_refund_source,
-                        'listener_id': booking.listener.id,
-                        'talker_id': booking.talker.id,
-                        'timestamp': timezone.now().isoformat(),
-                    }
+                try:
+                    channel_layer = get_channel_layer()
+                    if channel_layer:
+                        event_payload = {
+                            'type': 'booking_refund_notification',
+                            'booking_id': str(booking.id),
+                            'refund_amount': str(refund_amount),
+                            'listener_refund_amount': str(listener_refund_amount),
+                            'admin_refund_amount': str(admin_refund_amount),
+                            'listener_refund_source': listener_refund_source,
+                            'listener_id': booking.listener.id,
+                            'talker_id': booking.talker.id,
+                            'timestamp': timezone.now().isoformat(),
+                        }
 
-                    # Notify listener who performed the refund
-                    async_to_sync(channel_layer.group_send)(
-                        f'user_{booking.listener.id}_notifications',
-                        {
-                            **event_payload,
-                            'message': f'Refund processed for booking {booking.id}: ${refund_amount}',
-                        },
-                    )
+                        # Notify listener who performed the refund
+                        async_to_sync(channel_layer.group_send)(
+                            f'user_{booking.listener.id}_notifications',
+                            {
+                                **event_payload,
+                                'message': f'Refund processed for booking {booking.id}: ${refund_amount}',
+                            },
+                        )
 
-                    # Notify talker who receives card refund
-                    refund_message = f'You received a refund of ${refund_amount} for booking {booking.id}'
-                    if stripe_refund and stripe_refund.get('success'):
-                        refund_message += ' (processed to your payment card)'
-                    
-                    async_to_sync(channel_layer.group_send)(
-                        f'user_{booking.talker.id}_notifications',
-                        {
-                            **event_payload,
-                            'message': refund_message,
-                        },
-                    )
+                        # Notify talker who receives card refund
+                        refund_message = f'You received a refund of ${refund_amount} for booking {booking.id}'
+                        if stripe_refund and stripe_refund.get('success'):
+                            refund_message += ' (processed to your payment card)'
+                        
+                        async_to_sync(channel_layer.group_send)(
+                            f'user_{booking.talker.id}_notifications',
+                            {
+                                **event_payload,
+                                'message': refund_message,
+                            },
+                        )
+                except Exception as exc:
+                    logger.exception('Refund notification failed for booking %s: %s', booking.id, str(exc))
 
                 return Response(
                     {
