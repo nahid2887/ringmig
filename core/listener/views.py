@@ -1,3 +1,5 @@
+import stripe
+from django.conf import settings
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -18,6 +20,8 @@ from .serializers import (ListenerProfileSerializer, ListenerListSerializer, Lis
                          ListenerBalanceSerializer, ListenerTransactionSerializer,
                          RefundBookingSerializer)
 from bokking.booking_payments import process_stripe_refund, reverse_booking_listener_transfer
+
+stripe.api_key = settings.STRIPE_SECRET_KEY
 
 
 class IsListenerUser(IsAuthenticated):
