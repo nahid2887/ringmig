@@ -288,6 +288,15 @@ def reverse_booking_listener_transfer(booking, amount):
             'amount': str(amount),
             'message': f'Stripe transfer reversal failed: {str(exc)}',
         }
+    except Exception as exc:
+        logger.exception('Unexpected transfer reversal error for booking %s', booking.id)
+        return {
+            'success': False,
+            'reversal_id': None,
+            'transfer_id': transfer_id,
+            'amount': str(amount),
+            'message': f'Unexpected transfer reversal error: {str(exc)}',
+        }
 
 
 def _get_or_create_customer(user):
