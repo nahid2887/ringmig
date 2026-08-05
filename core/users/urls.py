@@ -13,7 +13,7 @@ from .views import (
     VerifyPasswordResetOTPView,
     ChangePasswordAfterResetView
 )
-from .views import CountryListView
+from .views import CountryListView, ServerTimeView
 from .dashboard_views import (
     SuperAdminDashboardView,
     DashboardUserStatsView,
@@ -27,6 +27,7 @@ urlpatterns = [
     path('register/', UserRegistrationView.as_view(), name='register'),  # Sends OTP
     path('verify-otp/', OTPVerificationView.as_view(), name='verify-otp'),  # Verifies OTP and creates user
     path('countries/', CountryListView.as_view(), name='countries'),
+    path('server-time/', ServerTimeView.as_view(), name='server-time'),
     path('login/', UserLoginView.as_view(), name='login'),
     path('logout/', UserLogoutView.as_view(), name='logout'),
     path('profile/', UserProfileView.as_view(), name='profile'),

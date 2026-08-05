@@ -14,7 +14,7 @@ import random
 import string
 import requests
 import os
-from datetime import timedelta
+from datetime import timedelta, timezone as datetime_timezone
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from .serializers import (
@@ -389,6 +389,22 @@ class CountryListView(APIView):
 
     def get(self, request):
         return Response([{'code': code, 'name': name} for code, name in COUNTRY_CHOICES], status=status.HTTP_200_OK)
+
+
+class ServerTimeView(APIView):
+    """Return the current server time."""
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        now = timezone.now()
+        return Response(
+            {
+                'server_time': now.isoformat(),
+                'server_time_utc': now.astimezone(datetime_timezone.utc).isoformat(),
+                'timestamp': int(now.timestamp()),
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class UserLogoutView(APIView):

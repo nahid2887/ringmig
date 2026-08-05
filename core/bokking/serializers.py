@@ -241,7 +241,7 @@ class PurchaseSessionBookingSerializer(serializers.Serializer):
         attrs['end_time'] = end_time
         return attrs
 
-
+ 
 class ConfirmSessionBookingPaymentSerializer(serializers.Serializer):
     """Input serializer for explicit payment confirmation endpoint."""
 
