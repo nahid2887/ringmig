@@ -46,7 +46,7 @@ class PeriodicRefreshMixin:
         try:
             while True:
                 await asyncio.sleep(self.REFRESH_INTERVAL)
-                # Call the provided callback to send fresh data
+                # Call the provided  callback to send fresh data
                 await callback()
         except asyncio.CancelledError:
             pass

@@ -1924,7 +1924,7 @@ class TipViewSet(viewsets.ModelViewSet):
                 }],
                 mode='payment',
                 success_url=f"{getattr(settings, 'FRONTEND_URL2', 'http://localhost:5174/dashboard/talker')}",
-                cancel_url=f"{getattr(settings, 'FRONTEND_URL', 'http://localhost:5174/dashboard/talker')}/payment/cancel?tip_id={tip.id}",
+                cancel_url=f"{getattr(settings,  'https://www.ring-mig.com/dashboard/talker/payment-failed')}
                 metadata={
                     'tip_id': tip.id,
                     'talker_id': request.user.id,
