@@ -162,7 +162,7 @@ class BookingViewSet(viewsets.ModelViewSet):
                                 },
                                 'unit_amount': amount_cents,
                             },
-                            'quantity': 1,
+                                cancel_url=f"{getattr(settings, 'FRONTEND_URL2', 'http://localhost:5174/dashboard/talker')}/payment-failed",
                         }
                     ],
                     customer_email=talker.email,
@@ -1924,7 +1924,7 @@ class TipViewSet(viewsets.ModelViewSet):
                 }],
                 mode='payment',
                 success_url=f"{getattr(settings, 'FRONTEND_URL2', 'http://localhost:5174/dashboard/talker')}",
-                cancel_url=f"{getattr(settings,  'https://www.ring-mig.com/dashboard/talker/payment-failed')}
+                cancel_url=f"{getattr(settings, 'FRONTEND_URL2', 'http://localhost:5174/dashboard/talker')}/payment-failed",
                 metadata={
                     'tip_id': tip.id,
                     'talker_id': request.user.id,
