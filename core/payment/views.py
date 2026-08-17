@@ -111,7 +111,6 @@ class BookingViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND
             )
         
-        # Check if listener is available
         if hasattr(listener, 'listener_profile') and not listener.listener_profile.is_available:
             return Response(
                 {'error': 'Listener is not available'},
@@ -162,7 +161,7 @@ class BookingViewSet(viewsets.ModelViewSet):
                                 },
                                 'unit_amount': amount_cents,
                             },
-                                cancel_url=f"{getattr(settings, 'FRONTEND_URL2', 'http://localhost:5174/dashboard/talker')}/payment-failed",
+                            'quantity': 1,
                         }
                     ],
                     customer_email=talker.email,
